@@ -16,7 +16,7 @@ export default function CellInspector() {
   const maxContrib = Math.max(0.0001, ...sorted.map((c) => c.contribution));
 
   return (
-    <div className="cell-inspector glass">
+    <div className="ci-body">
       <div className="ci-head">
         <div>
           <div className="overline">Cell {selected.toUpperCase()}</div>

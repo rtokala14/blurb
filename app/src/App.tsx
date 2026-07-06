@@ -3,7 +3,7 @@ import { useAppStore } from './store/useAppStore';
 import type { GridData, Scores, LayerDef } from './types';
 import MapView from './components/MapView';
 import ControlPanel from './components/ControlPanel';
-import CellInspector from './components/CellInspector';
+import RightDock from './components/RightDock';
 import Legend from './components/Legend';
 import Toolbar from './components/Toolbar';
 import ErrorBanner from './components/ErrorBanner';
@@ -16,6 +16,7 @@ export default function App() {
   const load = useAppStore((s) => s.load);
   const loaded = useAppStore((s) => s.loaded);
   const panelOpen = useAppStore((s) => s.ui.panelOpen);
+  const dockOpen = useAppStore((s) => s.ui.dockOpen);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
@@ -29,7 +30,7 @@ export default function App() {
   }, [load]);
 
   return (
-    <div className={`app-root ${panelOpen ? '' : 'panel-closed'}`}>
+    <div className={`app-root ${panelOpen ? '' : 'panel-closed'} ${dockOpen ? 'dock-open' : 'dock-closed'}`}>
       <MapView />
       {loaded && (
         <>
@@ -46,7 +47,7 @@ export default function App() {
           <ErrorBanner />
           {panelOpen && <ControlPanel />}
           <StatTiles />
-          <CellInspector />
+          <RightDock />
           <Legend />
         </>
       )}

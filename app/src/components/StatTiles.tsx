@@ -6,7 +6,6 @@ export default function StatTiles() {
   const grid = useAppStore((s) => s.grid);
   const layers = useAppStore((s) => s.layers);
   const scores = useAppStore((s) => s.scores);
-  const selected = useAppStore((s) => s.selectedCell);
 
   const stats = useMemo(() => {
     if (!grid) return null;
@@ -25,7 +24,7 @@ export default function StatTiles() {
     };
   }, [grid, layers, scores]);
 
-  if (!stats || selected) return null; // hide when inspector shown (same corner)
+  if (!stats) return null;
   const valid = isValid(layers);
 
   const tiles = [
