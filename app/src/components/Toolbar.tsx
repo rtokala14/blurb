@@ -11,6 +11,7 @@ export default function Toolbar() {
   const overlays = useAppStore((s) => s.overlays);
   const toggleOverlay = useAppStore((s) => s.toggleOverlay);
   const cvd = useAppStore((s) => s.ui.cvdSafeRamp);
+  const relative = useAppStore((s) => s.ui.relativeRamp);
   const panelOpen = useAppStore((s) => s.ui.panelOpen);
   const setUi = useAppStore((s) => s.setUi);
 
@@ -37,11 +38,18 @@ export default function Toolbar() {
       ))}
       <span className="tb-sep" />
       <button
+        className={`chip ${relative ? 'on' : ''}`}
+        onClick={() => setUi({ relativeRamp: !relative })}
+        title="Stretch the color ramp across the current score range so spatial contrast is maximized"
+      >
+        ◧ Contrast
+      </button>
+      <button
         className={`chip ${cvd ? 'on' : ''}`}
         onClick={() => setUi({ cvdSafeRamp: !cvd })}
-        title="Colorblind-safe blue ramp"
+        title="Switch to a colorblind-safe blue ramp"
       >
-        ◑ CVD-safe ramp
+        ◑ Colorblind-safe
       </button>
     </div>
   );

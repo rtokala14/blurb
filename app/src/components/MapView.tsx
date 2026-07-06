@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import maplibregl, { Map as MLMap, Marker } from 'maplibre-gl';
 import { useAppStore } from '../store/useAppStore';
-import { computeAllScores, isValid, rampExpression, contributions } from '../lib/score';
+import { computeAllScores, isValid, rampExpression, scoreDomain, contributions } from '../lib/score';
 import { RadialChart } from './RadialChart';
 
 const CARTO = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
@@ -18,6 +18,8 @@ const GRID_SRC = 'grid-src';
 const GRID_FILL = 'grid-fill';
 const GRID_LINE = 'grid-line';
 const GRID_HOVER = 'grid-hover';
+const GRID_SEL_GLOW = 'grid-sel-glow';
+const GRID_SEL = 'grid-sel';
 const CENTER: [number, number] = [73.232, 22.605];
 
 export default function MapView() {
@@ -97,6 +99,27 @@ export default function MapView() {
             'line-opacity': 0.95,
           },
         });
+        map.addLayer({
+          id: GRID_SEL_GLOW,
+          type: 'line',
+          source: GRID_SRC,
+          paint: {
+            'line-color': '#22d3ee',
+            'line-width': ['case', ['boolean', ['feature-state', 'selected'], false], 10, 0],
+            'line-blur': 5,
+            'line-opacity': 0.45,
+          },
+        });
+        map.addLayer({
+          id: GRID_SEL,
+          type: 'line',
+          source: GRID_SRC,
+          paint: {
+            'line-color': '#7ff3ff',
+            'line-width': ['case', ['boolean', ['feature-state', 'selected'], false], 2.6, 0],
+            'line-opacity': 0.95,
+          },
+        });
 
         addOverlays(map);
         radialRef.current = new RadialChart(map);
@@ -152,7 +175,8 @@ export default function MapView() {
       map.setFeatureState({ source: GRID_SRC, id: i }, { score: scores[i] < 0 ? null : scores[i] });
     }
     if (valid) {
-      map.setPaintProperty(GRID_FILL, 'fill-color', rampExpression(st.ui.cvdSafeRamp));
+      const domain = st.ui.relativeRamp ? scoreDomain(scores) : ([0, 1] as [number, number]);
+      map.setPaintProperty(GRID_FILL, 'fill-color', rampExpression(st.ui.cvdSafeRamp, domain));
       map.setPaintProperty(GRID_FILL, 'fill-opacity', 0.78);
     } else {
       // desaturate to gray + low opacity
@@ -167,7 +191,7 @@ export default function MapView() {
   // subscribe to store changes affecting scores
   useEffect(() => {
     const unsub = useAppStore.subscribe((s, prev) => {
-      if (s.layers !== prev.layers || s.ui.cvdSafeRamp !== prev.ui.cvdSafeRamp) {
+      if (s.layers !== prev.layers || s.ui.cvdSafeRamp !== prev.ui.cvdSafeRamp || s.ui.relativeRamp !== prev.ui.relativeRamp) {
         pushScores();
         // live re-animate radial if a cell is selected & valid
         if (s.selectedCell && isValid(s.layers)) reanimateRadial(s.selectedCell);
@@ -179,10 +203,20 @@ export default function MapView() {
 
   // ---- selection: camera + radial ----
   const selectedCell = useAppStore((s) => s.selectedCell);
+  const prevSelIdx = useRef<number | null>(null);
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !readyRef.current) return;
     const st = useAppStore.getState();
+    if (prevSelIdx.current !== null) {
+      map.setFeatureState({ source: GRID_SRC, id: prevSelIdx.current }, { selected: false });
+      prevSelIdx.current = null;
+    }
+    if (selectedCell != null && idxByCell.current[selectedCell] != null) {
+      const idx = idxByCell.current[selectedCell];
+      map.setFeatureState({ source: GRID_SRC, id: idx }, { selected: true });
+      prevSelIdx.current = idx;
+    }
     if (!selectedCell) {
       radialRef.current?.hide();
       chipRef.current?.remove();
@@ -219,14 +253,19 @@ export default function MapView() {
     const { total } = contributions(cellId, st.layers, st.catalogById, st.scores);
     const scoreVal = Math.round(total);
     if (!chipRef.current) {
-      const el = document.createElement('div');
-      el.className = 'score-chip';
-      chipRef.current = new maplibregl.Marker({ element: el, anchor: 'bottom', offset: [0, -6] })
+      // Inner wrapper carries the pop animation; MapLibre positions the root
+      // via an inline transform that a keyframed transform would override.
+      // Floated above the ring so far-side sector labels stay unobstructed.
+      const root = document.createElement('div');
+      const inner = document.createElement('div');
+      inner.className = 'score-chip';
+      root.appendChild(inner);
+      chipRef.current = new maplibregl.Marker({ element: root, anchor: 'bottom', offset: [0, -170] })
         .setLngLat(cell.centroid)
         .addTo(map);
     }
-    const el = chipRef.current.getElement();
-    el.innerHTML = `<div class="chip-score tnum">${scoreVal}</div><div class="chip-label">usability</div>`;
+    const inner = chipRef.current.getElement().firstElementChild as HTMLElement;
+    inner.innerHTML = `<div class="chip-score tnum">${scoreVal}</div><div class="chip-label">usability</div>`;
     chipRef.current.setLngLat(cell.centroid);
   }
 
@@ -243,7 +282,12 @@ export default function MapView() {
     }
   }, [overlays]);
 
-  return <div id="map" />;
+  return (
+    <>
+      <div id="map" />
+      <div className="map-vignette" />
+    </>
+  );
 }
 
 // ---- overlay layers ----

@@ -11,6 +11,10 @@
 .legend-bar { height: 10px; border-radius: 5px; margin: 9px 0 5px; border: 1px solid var(--hairline); }
 .legend-scale { display: flex; justify-content: space-between; font-size: 10px; color: var(--ink-3); }
 .legend-ends { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--ink-2); margin-top: 3px; }
+.legend-note {
+  margin-top: 7px; padding-top: 6px; border-top: 1px solid var(--hairline);
+  font-size: 9.5px; color: var(--ink-3); letter-spacing: 0.02em;
+}
 
 /* ============ Stat tiles ============ */
 .stat-tile { padding: 10px 14px; min-width: 84px; }

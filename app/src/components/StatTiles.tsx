@@ -29,10 +29,10 @@ export default function StatTiles() {
   const valid = isValid(layers);
 
   const tiles = [
-    { label: 'Cells', value: '500', sub: '1 km² each' },
-    { label: 'Mean score', value: valid ? stats.mean.toFixed(1) : '—', sub: '0–100' },
-    { label: 'Top cell', value: valid ? stats.max.toFixed(0) : '—', sub: 'peak' },
-    { label: 'Prime > 70', value: valid ? stats.over70.toFixed(0) + '%' : '—', sub: 'of grid' },
+    { label: 'Grid', value: '500', sub: 'cells · 1 km² each' },
+    { label: 'Mean score', value: valid ? stats.mean.toFixed(1) : '—', sub: 'across grid' },
+    { label: 'Top cell', value: valid ? stats.max.toFixed(0) : '—', sub: 'peak score' },
+    { label: 'Prime land', value: valid ? stats.over70.toFixed(0) + '%' : '—', sub: 'cells above 70' },
   ];
 
   return (

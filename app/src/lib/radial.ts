@@ -17,7 +17,7 @@ function offset(lon: number, lat: number, east: number, north: number): [number,
 
 export const INNER_R = 620;
 export const OUTER_R = 900;
-export const H_MAX = 2600;
+export const H_MAX = 1000;
 export const GAP_DEG = 3;
 
 export interface SectorFeature {
@@ -42,6 +42,10 @@ export function buildSectors(
   const [lon, lat] = center;
   const n = contribs.length;
   if (n === 0) return [];
+  // Heights are normalized to the cell's largest contribution so the ring
+  // always reads dramatic regardless of the absolute score level; relative
+  // proportions between sectors are preserved.
+  const maxC = Math.max(...contribs.map((c) => c.contribution), 0);
   const step = 360 / n;
   const half = GAP_DEG / 2;
   const ARC_SEGMENTS = Math.max(3, Math.round((step - GAP_DEG) / 4));
@@ -63,7 +67,10 @@ export function buildSectors(
     ring.push(ring[0]);
 
     const mid = toRad((a0 + a1) / 2);
-    const labelR = OUTER_R + 130;
+    // Stagger alternate labels across two radii so adjacent pills don't
+    // collide, and push north-side labels further out to compensate for the
+    // ~2x screen-space compression of the far half at the 58° camera pitch.
+    const labelR = OUTER_R + (i % 2 === 0 ? 190 : 400) + Math.max(0, Math.cos(mid)) * 330;
     const [labelLon, labelLat] = offset(lon, lat, Math.sin(mid) * labelR, Math.cos(mid) * labelR);
 
     return {
@@ -73,7 +80,7 @@ export function buildSectors(
         name: c.name,
         color: c.color,
         contribution: c.contribution,
-        targetHeight: (c.contribution / 100) * H_MAX,
+        targetHeight: maxC > 0 ? (c.contribution / maxC) * H_MAX : 0,
         labelLon,
         labelLat,
       },

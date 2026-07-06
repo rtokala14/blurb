@@ -25,16 +25,38 @@ export function rampColor(v: number, cvdSafe: boolean): string {
 }
 
 // MapLibre interpolate expression for the fill layer, driven by feature-state.
-export function rampExpression(cvdSafe: boolean): any {
+// `domain` lets the ramp stretch across [lo, hi] instead of [0, 1] (relative
+// contrast mode) so spatial variation uses the full red->green range.
+export function rampExpression(cvdSafe: boolean, domain: [number, number] = [0, 1]): any {
   const s = cvdSafe ? ['#0d366b', '#2f6fc0', '#cde2fb'] : ['#d03b3b', '#fab219', '#0ca30c'];
+  const [lo, hi] = domain;
+  const mid = (lo + hi) / 2;
   return [
     'interpolate', ['linear'],
     ['coalesce', ['feature-state', 'score'], -1],
-    -1, '#2a2a28',
-    0, s[0],
-    0.5, s[1],
-    1, s[2],
+    Math.min(-1, lo - 1), '#2a2a28',
+    lo, s[0],
+    mid, s[1],
+    hi, s[2],
   ];
+}
+
+// [min, max] of valid (>= 0) cell scores, guarded against degenerate ranges
+// so the interpolate stops stay strictly ascending.
+export function scoreDomain(arr: Float32Array): [number, number] {
+  let lo = 1, hi = 0;
+  for (let i = 0; i < arr.length; i++) {
+    const v = arr[i];
+    if (v < 0) continue;
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  }
+  if (hi <= lo) return [0, 1];
+  if (hi - lo < 0.04) {
+    const m = (hi + lo) / 2;
+    return [Math.max(0, m - 0.02), Math.min(1, m + 0.02)];
+  }
+  return [lo, hi];
 }
 
 // ---- weighted scoring with per-cell null re-normalization ----
