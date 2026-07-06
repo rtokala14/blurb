@@ -19,14 +19,12 @@
 .topbar {
   position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
   display: flex; align-items: center; gap: 22px;
-  z-index: 20; pointer-events: none;
+  z-index: 20;
 }
-.topbar > * { pointer-events: auto; }
 .brand {
+  position: absolute; top: 16px; left: 16px; width: 344px; z-index: 20;
   display: flex; align-items: center; gap: 12px;
-  padding: 9px 16px 9px 12px; border-radius: 12px;
-  background: var(--panel); backdrop-filter: blur(16px);
-  border: 1px solid var(--hairline); box-shadow: var(--shadow);
+  padding: 11px 16px 11px 12px; border-radius: 12px;
 }
 .brand-mark {
   width: 30px; height: 30px; border-radius: 8px;

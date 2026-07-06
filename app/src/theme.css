@@ -86,6 +86,7 @@ button:focus-visible, input:focus-visible {
   color: var(--ink-2);
   font-size: 12px;
   font-weight: 500;
+  white-space: nowrap;
   transition: all 160ms ease-out;
   user-select: none;
 }

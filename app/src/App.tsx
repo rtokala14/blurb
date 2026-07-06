@@ -33,14 +33,14 @@ export default function App() {
       <MapView />
       {loaded && (
         <>
-          <div className="topbar">
-            <div className="brand">
-              <div className="brand-mark" />
-              <div>
-                <div className="brand-title">LAND USABILITY EXPLORER</div>
-                <div className="brand-sub">Vadodara Region · 500-cell analysis grid</div>
-              </div>
+          <div className="brand glass">
+            <div className="brand-mark" />
+            <div>
+              <div className="brand-title">LAND USABILITY EXPLORER</div>
+              <div className="brand-sub">Vadodara Region · 500-cell analysis grid</div>
             </div>
+          </div>
+          <div className="topbar">
             <Toolbar />
           </div>
           <ErrorBanner />
