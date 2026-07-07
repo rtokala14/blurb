@@ -74,7 +74,7 @@ export function DocPreviewSheet({
   return (
     <>
       <Sheet open={open} onOpenChange={onOpenChange}>
-        <SheetContent className="w-[420px] gap-0 sm:max-w-[420px]">
+        <SheetContent className="w-full gap-0 sm:w-[420px] sm:max-w-[420px]">
           <SheetHeader className="border-b">
             <SheetTitle className="flex items-start gap-2.5 pr-6 text-left leading-snug">
               <DocIcon type={doc.type} className="mt-0.5 size-5" />

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation"
 import {
   Cable,
   FolderOpen,
+  Keyboard,
   LayoutDashboard,
   MessageSquareText,
   Moon,
@@ -65,19 +66,29 @@ export function CommandPalette({
           <CommandItem onSelect={() => run(() => createSession())}>
             <PenSquare />
             New chat session
-            <CommandShortcut>⌘N</CommandShortcut>
+            <CommandShortcut>⌘⇧O</CommandShortcut>
           </CommandItem>
           <CommandItem
             onSelect={() => run(() => router.push("/documents?upload=1"))}
           >
             <Upload />
             Upload documents
+            <CommandShortcut>⌘⇧U</CommandShortcut>
           </CommandItem>
           <CommandItem
             onSelect={() => run(() => router.push("/connections?sync=1"))}
           >
             <RefreshCw />
             Sync SharePoint now
+          </CommandItem>
+          <CommandItem
+            onSelect={() =>
+              run(() => window.dispatchEvent(new CustomEvent("orbit:show-shortcuts")))
+            }
+          >
+            <Keyboard />
+            Keyboard shortcuts
+            <CommandShortcut>?</CommandShortcut>
           </CommandItem>
         </CommandGroup>
         <CommandSeparator />

@@ -48,9 +48,9 @@ export default function StudioPage() {
   }
 
   return (
-    <div className="flex min-h-0 flex-1">
+    <div className="flex min-h-0 flex-1 flex-col md:flex-row">
       {/* Artifact list */}
-      <aside className="flex w-80 shrink-0 flex-col border-r">
+      <aside className="flex max-h-56 w-full shrink-0 flex-col border-b md:max-h-none md:w-80 md:border-r md:border-b-0">
         <div className="border-b px-4 py-3">
           <h2 className="text-sm font-semibold">AI artifacts</h2>
           <p className="text-muted-foreground text-xs">
@@ -95,7 +95,7 @@ export default function StudioPage() {
       </aside>
 
       {/* Editor */}
-      <div className="min-w-0 flex-1">
+      <div className="min-h-0 min-w-0 flex-1">
         {selected && <StudioPanel artifact={selected} standalone />}
       </div>
     </div>

@@ -7,6 +7,7 @@ import {
   Cloud,
   FolderInput,
   FolderPlus,
+  FolderTree as FolderTreeIcon,
   LayoutGrid,
   Link2,
   List,
@@ -67,6 +68,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
 import { Spinner } from "@/components/ui/spinner"
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
 import {
   Table,
   TableBody,
@@ -124,6 +126,7 @@ export function DocumentsView() {
   const [previewDocId, setPreviewDocId] = React.useState<string | null>(null)
   const [newFolderOpen, setNewFolderOpen] = React.useState(false)
   const [newFolderName, setNewFolderName] = React.useState("")
+  const [treeSheetOpen, setTreeSheetOpen] = React.useState(false)
 
   /* deep links: /documents?upload=1 and /documents?doc=<id> */
   React.useEffect(() => {
@@ -235,18 +238,41 @@ export function DocumentsView() {
 
   return (
     <div className="flex min-h-0 flex-1">
-      {/* Folder tree */}
-      <aside className="w-64 shrink-0 overflow-y-auto border-r p-3">
+      {/* Folder tree — fixed rail on desktop, sheet on mobile */}
+      <aside className="hidden w-64 shrink-0 overflow-y-auto border-r p-3 md:block">
         <FolderTree
           currentFolderId={currentFolderId}
           onSelect={setCurrentFolderId}
         />
       </aside>
+      <Sheet open={treeSheetOpen} onOpenChange={setTreeSheetOpen}>
+        <SheetContent side="left" className="w-72 p-3 pt-10">
+          <SheetTitle className="sr-only">Folders</SheetTitle>
+          <div className="overflow-y-auto">
+            <FolderTree
+              currentFolderId={currentFolderId}
+              onSelect={(id) => {
+                setCurrentFolderId(id)
+                setTreeSheetOpen(false)
+              }}
+            />
+          </div>
+        </SheetContent>
+      </Sheet>
 
       {/* Main */}
       <main className="flex min-w-0 flex-1 flex-col">
         {/* Toolbar */}
-        <div className="flex items-center gap-3 border-b px-4 py-3">
+        <div className="flex flex-wrap items-center gap-2 border-b px-4 py-3 sm:gap-3">
+          <Button
+            variant="outline"
+            size="icon-sm"
+            className="md:hidden"
+            aria-label="Browse folders"
+            onClick={() => setTreeSheetOpen(true)}
+          >
+            <FolderTreeIcon />
+          </Button>
           <Breadcrumb>
             <BreadcrumbList>
               {breadcrumbSegments.map((seg, i) => {
@@ -272,12 +298,12 @@ export function DocumentsView() {
             </BreadcrumbList>
           </Breadcrumb>
 
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex flex-wrap items-center gap-2">
             <div className="relative">
               <Search className="text-muted-foreground absolute top-1/2 left-2.5 size-4 -translate-y-1/2" />
               <Input
                 placeholder="Filter by name or tag…"
-                className="h-8 w-56 pl-8"
+                className="h-8 w-40 pl-8 sm:w-56"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
               />
@@ -286,7 +312,9 @@ export function DocumentsView() {
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" size="sm">
                   <ArrowUpDown />
-                  {sort === "updated" ? "Last modified" : sort === "name" ? "Name" : "Size"}
+                  <span className="hidden sm:inline">
+                    {sort === "updated" ? "Last modified" : sort === "name" ? "Name" : "Size"}
+                  </span>
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
@@ -320,10 +348,10 @@ export function DocumentsView() {
               size="sm"
               onClick={() => setNewFolderOpen(true)}
             >
-              <FolderPlus /> New folder
+              <FolderPlus /> <span className="hidden sm:inline">New folder</span>
             </Button>
             <Button size="sm" onClick={() => setUploadOpen(true)}>
-              <Upload /> Upload
+              <Upload /> <span className="hidden sm:inline">Upload</span>
             </Button>
           </div>
         </div>
@@ -389,9 +417,9 @@ export function DocumentsView() {
                 <TableRow>
                   <TableHead>Name</TableHead>
                   <TableHead className="w-36">Status</TableHead>
-                  <TableHead className="w-36">Owner</TableHead>
-                  <TableHead className="w-28">Modified</TableHead>
-                  <TableHead className="w-20 text-right">Size</TableHead>
+                  <TableHead className="hidden w-36 lg:table-cell">Owner</TableHead>
+                  <TableHead className="hidden w-28 sm:table-cell">Modified</TableHead>
+                  <TableHead className="hidden w-20 text-right md:table-cell">Size</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -416,13 +444,13 @@ export function DocumentsView() {
                         <TableCell>
                           <StatusCell doc={doc} />
                         </TableCell>
-                        <TableCell className="text-muted-foreground">
+                        <TableCell className="text-muted-foreground hidden lg:table-cell">
                           {doc.owner}
                         </TableCell>
-                        <TableCell className="text-muted-foreground">
+                        <TableCell className="text-muted-foreground hidden sm:table-cell">
                           <TimeAgo iso={doc.updatedAt} />
                         </TableCell>
-                        <TableCell className="text-muted-foreground text-right tabular-nums">
+                        <TableCell className="text-muted-foreground hidden text-right tabular-nums md:table-cell">
                           {formatSize(doc.sizeKB)}
                         </TableCell>
                       </TableRow>
@@ -433,7 +461,7 @@ export function DocumentsView() {
               </TableBody>
             </Table>
           ) : (
-            <div className="grid grid-cols-3 gap-4 p-4 xl:grid-cols-4">
+            <div className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {visible.map((doc) => (
                 <ContextMenu key={doc.id}>
                   <ContextMenuTrigger asChild>

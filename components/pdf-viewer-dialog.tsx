@@ -164,7 +164,7 @@ export function PdfViewerDialog({
 
         <div className="flex min-h-0 flex-1">
           {/* Thumbnail rail */}
-          <div className="w-24 shrink-0 border-r">
+          <div className="hidden w-24 shrink-0 border-r sm:block">
             <ScrollArea className="h-full">
               <div className="space-y-2 p-3">
                 {Array.from({ length: Math.min(totalPages, 12) }, (_, i) => {

@@ -161,6 +161,7 @@ export function Composer({
         {/* Input */}
         <div className="focus-within:ring-ring/50 bg-muted/40 relative rounded-xl border transition-shadow focus-within:ring-2">
           <Textarea
+            id="chat-composer"
             ref={textareaRef}
             value={value}
             onChange={(e) => setValue(e.target.value)}
@@ -194,13 +195,14 @@ export function Composer({
               </TooltipTrigger>
               <TooltipContent>Create a doc, sheet, or deck</TooltipContent>
             </Tooltip>
-            <span className="text-muted-foreground ml-auto mr-2 text-[11px]">
+            <span className="text-muted-foreground ml-auto mr-2 text-[11px] max-sm:hidden">
               <Kbd>↵</Kbd> send · <Kbd>⇧↵</Kbd> newline
             </span>
             {isBusy ? (
               <Button
                 size="icon-sm"
                 variant="secondary"
+                className="max-sm:ml-auto"
                 aria-label="Stop generating"
                 onClick={onStop}
               >
@@ -209,6 +211,7 @@ export function Composer({
             ) : (
               <Button
                 size="icon-sm"
+                className="max-sm:ml-auto"
                 aria-label="Send message"
                 disabled={!value.trim()}
                 onClick={submit}

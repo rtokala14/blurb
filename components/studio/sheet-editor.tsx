@@ -3,7 +3,6 @@
 import * as React from "react"
 import { FunctionSquare } from "lucide-react"
 
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { cn } from "@/lib/utils"
@@ -151,8 +150,8 @@ export function SheetEditor({
         )}
       </div>
 
-      <ScrollArea className="min-h-0 flex-1">
-        <table className="w-full border-collapse text-sm">
+      <div className="thin-scrollbar min-h-0 flex-1 overflow-auto">
+        <table className="w-full min-w-[560px] border-collapse text-sm">
           <thead>
             <tr>
               <th className="bg-muted text-muted-foreground sticky top-0 w-10 border p-1 text-xs font-normal" />
@@ -222,7 +221,7 @@ export function SheetEditor({
             ))}
           </tbody>
         </table>
-      </ScrollArea>
+      </div>
 
       {/* Sheet tabs */}
       <div className="border-t px-2 py-1">

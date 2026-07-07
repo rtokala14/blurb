@@ -120,7 +120,7 @@ export function DeckEditor({
   return (
     <div className="flex h-full min-h-0">
       {/* Thumbnails */}
-      <div className="w-40 shrink-0 border-r">
+      <div className="w-24 shrink-0 border-r sm:w-40">
         <ScrollArea className="h-full">
           <div className="space-y-2 p-2.5">
             {slides.map((s, i) => (

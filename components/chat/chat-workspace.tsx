@@ -17,6 +17,7 @@ import {
 import { Composer } from "@/components/chat/composer"
 import { DocumentsPanel } from "@/components/chat/documents-panel"
 import { ExportDialog } from "@/components/chat/export-dialog"
+import { isEditableTarget } from "@/components/keyboard-shortcuts"
 import { Message } from "@/components/chat/message"
 import { TurnsNavigator } from "@/components/chat/turns-navigator"
 import { useChatSimulation } from "@/components/chat/use-chat-simulation"
@@ -44,12 +45,14 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable"
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { activePath, countBranches, useOrbit } from "@/lib/store"
+import { useIsMobile } from "@/hooks/use-mobile"
 
 const suggestions = [
   "Which vendors are up for renewal this quarter?",
@@ -71,6 +74,7 @@ export function ChatWorkspace() {
   const session = sessions.find((s) => s.id === activeSessionId) ?? sessions[0]
   const openArtifact = artifacts.find((a) => a.id === openArtifactId) ?? null
 
+  const isMobile = useIsMobile()
   const [contextOpen, setContextOpen] = React.useState(true)
   const [turnsOpen, setTurnsOpen] = React.useState(true)
 
@@ -78,6 +82,11 @@ export function ChatWorkspace() {
   React.useEffect(() => {
     if (openArtifactId) setContextOpen(false)
   }, [openArtifactId])
+
+  /* the documents panel becomes an off-canvas sheet on small screens */
+  React.useEffect(() => {
+    if (isMobile) setContextOpen(false)
+  }, [isMobile])
   const [exportOpen, setExportOpen] = React.useState(false)
   const [renaming, setRenaming] = React.useState(false)
   const [titleDraft, setTitleDraft] = React.useState("")
@@ -118,6 +127,66 @@ export function ChatWorkspace() {
     el.querySelectorAll("[id^='msg-']").forEach((node) => observer.observe(node))
     return () => observer.disconnect()
   }, [path.length, session?.id])
+
+  /* chat hotkeys: Esc stop · ⌘⇧E export · ⌘. docs panel · ⌥↑/↓ turns ·
+     type anywhere to focus the composer */
+  const hotkeyState = React.useRef({ sim, session, activeMessageId })
+  React.useEffect(() => {
+    hotkeyState.current = { sim, session, activeMessageId }
+  })
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const { sim: s, session: current, activeMessageId: active } =
+        hotkeyState.current
+      const mod = e.metaKey || e.ctrlKey
+      if (e.key === "Escape" && s.isBusy) {
+        s.stop()
+        return
+      }
+      if (mod && e.shiftKey && e.key.toLowerCase() === "e") {
+        e.preventDefault()
+        setExportOpen(true)
+        return
+      }
+      if (mod && !e.shiftKey && e.key === ".") {
+        e.preventDefault()
+        setContextOpen((v) => !v)
+        return
+      }
+      if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown") && current) {
+        e.preventDefault()
+        const turns = activePath(current).filter((m) => m.role === "user")
+        if (turns.length === 0) return
+        const fullPath = activePath(current)
+        let index = turns.findIndex(
+          (t) =>
+            t.id === active ||
+            fullPath.find((m) => m.parentId === t.id)?.id === active
+        )
+        if (index === -1) index = e.key === "ArrowUp" ? turns.length : -1
+        const next =
+          e.key === "ArrowUp"
+            ? Math.max(0, index - 1)
+            : Math.min(turns.length - 1, index + 1)
+        document
+          .getElementById(`msg-${turns[next].id}`)
+          ?.scrollIntoView({ behavior: "smooth", block: "start" })
+        return
+      }
+      /* plain typing focuses the composer, ChatGPT-style */
+      if (
+        !isEditableTarget(e.target) &&
+        !mod &&
+        !e.altKey &&
+        e.key.length === 1 &&
+        e.key !== "?"
+      ) {
+        document.getElementById("chat-composer")?.focus()
+      }
+    }
+    document.addEventListener("keydown", onKey)
+    return () => document.removeEventListener("keydown", onKey)
+  }, [])
 
   if (!session) {
     return (
@@ -180,7 +249,9 @@ export function ChatWorkspace() {
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button variant="ghost" size="sm" className="gap-1.5 font-medium">
-                      <span className="max-w-72 truncate">{session.title}</span>
+                      <span className="max-w-36 truncate sm:max-w-72">
+                        {session.title}
+                      </span>
                       <ChevronDown className="text-muted-foreground size-3.5" />
                     </Button>
                   </DropdownMenuTrigger>
@@ -215,7 +286,8 @@ export function ChatWorkspace() {
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Badge variant="outline" className="gap-1">
-                      <GitBranch className="size-3" /> {branches} branches
+                      <GitBranch className="size-3" /> {branches}
+                      <span className="max-sm:hidden">branches</span>
                     </Badge>
                   </TooltipTrigger>
                   <TooltipContent>
@@ -230,6 +302,7 @@ export function ChatWorkspace() {
                     <Button
                       variant="ghost"
                       size="icon-sm"
+                      className="max-sm:hidden"
                       aria-label="Toggle turns navigator"
                       onClick={() => setTurnsOpen((v) => !v)}
                     >
@@ -339,7 +412,7 @@ export function ChatWorkspace() {
           </div>
         </ResizablePanel>
 
-        {openArtifact && (
+        {openArtifact && !isMobile && (
           <>
             <ResizableHandle withHandle />
             <ResizablePanel defaultSize={45} minSize={28}>
@@ -352,14 +425,36 @@ export function ChatWorkspace() {
         )}
       </ResizablePanelGroup>
 
-      {/* Documents panel (right, collapsible) */}
-      {contextOpen && (
-        <aside className="w-80 shrink-0">
-          <DocumentsPanel
-            session={session}
-            onClose={() => setContextOpen(false)}
+      {/* Studio takes over the screen on mobile */}
+      {openArtifact && isMobile && (
+        <div className="bg-background fixed inset-0 z-50">
+          <StudioPanel
+            artifact={openArtifact}
+            onClose={() => setOpenArtifact(null)}
           />
-        </aside>
+        </div>
+      )}
+
+      {/* Documents panel: fixed aside on desktop, off-canvas sheet on mobile */}
+      {isMobile ? (
+        <Sheet open={contextOpen} onOpenChange={setContextOpen}>
+          <SheetContent side="right" className="w-[88vw] gap-0 p-0 sm:max-w-sm">
+            <SheetTitle className="sr-only">Documents</SheetTitle>
+            <DocumentsPanel
+              session={session}
+              onClose={() => setContextOpen(false)}
+            />
+          </SheetContent>
+        </Sheet>
+      ) : (
+        contextOpen && (
+          <aside className="w-80 shrink-0">
+            <DocumentsPanel
+              session={session}
+              onClose={() => setContextOpen(false)}
+            />
+          </aside>
+        )
       )}
 
       <ExportDialog

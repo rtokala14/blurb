@@ -80,7 +80,7 @@ export function ConnectionsView() {
   return (
     <div className="flex-1 overflow-y-auto">
       <div className="mx-auto max-w-4xl space-y-6 p-6">
-        <div className="flex items-end justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <h1 className="text-xl font-semibold tracking-tight">Connections</h1>
             <p className="text-muted-foreground text-sm">
@@ -154,7 +154,7 @@ export function ConnectionsView() {
                     </Button>
                   </div>
                   <Separator className="my-3" />
-                  <div className="text-muted-foreground flex items-center gap-6 text-xs">
+                  <div className="text-muted-foreground flex flex-wrap items-center gap-x-6 gap-y-2 text-xs">
                     <span className="flex items-center gap-1.5">
                       <FolderSync className="size-3.5" />
                       Maps to{" "}
@@ -246,7 +246,7 @@ export function ConnectionsView() {
         </Card>
 
         {/* Coming soon */}
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           {comingSoon.map((integration) => (
             <Card key={integration.name} className="gap-2">
               <CardHeader>

@@ -31,7 +31,7 @@ export function TurnsNavigator({
   return (
     <nav
       aria-label="Turns"
-      className="absolute top-1/2 right-2.5 z-10 flex -translate-y-1/2 flex-col items-end gap-2"
+      className="absolute top-1/2 right-2.5 z-10 flex -translate-y-1/2 flex-col items-end gap-2 max-sm:hidden"
     >
       {turns.map((turn, i) => {
         const reply = path.find(

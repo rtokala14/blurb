@@ -220,7 +220,7 @@ export function DocumentsPanel({
                 variant="ghost"
                 size="icon-sm"
                 aria-label={`Preview ${doc.name}`}
-                className="size-6 opacity-0 group-hover:opacity-100"
+                className="size-6 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 max-md:opacity-100"
                 onClick={() => setPreviewDoc(doc)}
               >
                 <Eye className="size-3.5" />
@@ -262,11 +262,13 @@ export function DocumentsPanel({
             </TooltipTrigger>
             <TooltipContent>Upload docs or folders</TooltipContent>
           </Tooltip>
+          {/* the mobile sheet supplies its own close button */}
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
                 variant="ghost"
                 size="icon-sm"
+                className="max-md:hidden"
                 aria-label="Collapse documents panel"
                 onClick={onClose}
               >

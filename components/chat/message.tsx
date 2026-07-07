@@ -165,16 +165,16 @@ export function Message({
               </p>
             </div>
             <div className="mt-1 flex h-7 items-center gap-1">
-              <span className="text-muted-foreground mr-1 text-xs opacity-0 transition-opacity group-hover:opacity-100">
+              <span className="text-muted-foreground mr-1 text-xs opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100">
                 {message.scopeLabel}
                 {message.editedFrom && " · edited"}
               </span>
-              <div className="opacity-0 transition-opacity group-hover:opacity-100">
+              <div className="opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100">
                 <ActionButton label="Copy" onClick={copy}>
                   {copied ? <Check /> : <Copy />}
                 </ActionButton>
               </div>
-              <div className="opacity-0 transition-opacity group-hover:opacity-100">
+              <div className="opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100">
                 <ActionButton
                   label="Edit & branch"
                   onClick={() => {
@@ -252,7 +252,7 @@ export function Message({
 
         {/* Actions */}
         {message.phase === "done" && (
-          <div className="mt-2 flex h-7 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 has-[button[data-state=open]]:opacity-100">
+          <div className="mt-2 flex h-7 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100 has-[button[data-state=open]]:opacity-100">
             <ActionButton label={copied ? "Copied" : "Copy"} onClick={copy}>
               {copied ? <Check /> : <Copy />}
             </ActionButton>

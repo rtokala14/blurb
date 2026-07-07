@@ -68,7 +68,7 @@ export default function DashboardPage() {
   return (
     <div className="flex-1 overflow-y-auto">
       <div className="mx-auto max-w-6xl space-y-6 p-6">
-        <div className="flex items-end justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <p className="text-chart-1 mb-1 flex items-center gap-1.5 text-[11px] font-semibold tracking-[0.18em]">
               <span className="bg-chart-1 inline-block size-1.5 rounded-full" />
@@ -96,7 +96,7 @@ export default function DashboardPage() {
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <Card className="gap-2">
             <CardHeader>
               <CardDescription>Documents indexed</CardDescription>
@@ -118,7 +118,9 @@ export default function DashboardPage() {
               </CardAction>
             </CardHeader>
             <CardFooter className="text-muted-foreground text-xs">
-              Last sync <TimeAgo iso={sites[0].lastSyncedAt} />
+              <span>
+                Last sync <TimeAgo iso={sites[0].lastSyncedAt} />
+              </span>
             </CardFooter>
           </Card>
           <Card className="gap-2">
@@ -153,9 +155,9 @@ export default function DashboardPage() {
           </Card>
         </div>
 
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
           {/* Ingest pipeline */}
-          <Card className="col-span-2">
+          <Card className="lg:col-span-2">
             <CardHeader>
               <CardTitle className="text-base">Ingestion pipeline</CardTitle>
               <CardDescription>
@@ -244,7 +246,7 @@ export default function DashboardPage() {
           </Card>
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           {/* Recent documents */}
           <Card>
             <CardHeader>

@@ -172,7 +172,7 @@ export function EmailDialog({
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="email-to">To</Label>
                 <Input
@@ -192,7 +192,7 @@ export function EmailDialog({
               </div>
             </div>
 
-            <div className="flex items-end gap-3">
+            <div className="flex flex-wrap items-end gap-3">
               <div className="space-y-1.5">
                 <Label>Tone</Label>
                 <Select value={tone} onValueChange={(v) => setTone(v as Tone)}>
