@@ -21,6 +21,8 @@ const GRID_HOVER = 'grid-hover';
 const GRID_SEL_GLOW = 'grid-sel-glow';
 const GRID_SEL = 'grid-sel';
 const CENTER: [number, number] = [73.232, 22.605];
+const HOME = { center: CENTER, zoom: 10.6, pitch: 0, bearing: -8 };
+const REDUCED_MOTION = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 export default function MapView() {
   const mapRef = useRef<MLMap | null>(null);
@@ -49,10 +51,12 @@ export default function MapView() {
       const map = new maplibregl.Map({
         container: 'map',
         style,
+        // Cinematic load-in starts wide and pitched, then eases to the
+        // working view; reduced-motion users start at the working view.
         center: CENTER,
-        zoom: 10.6,
-        pitch: 0,
-        bearing: -8,
+        zoom: REDUCED_MOTION ? HOME.zoom : 9.5,
+        pitch: REDUCED_MOTION ? HOME.pitch : 52,
+        bearing: REDUCED_MOTION ? HOME.bearing : -34,
         attributionControl: { compact: true },
         maxPitch: 70,
       });
@@ -129,6 +133,21 @@ export default function MapView() {
         // initial paint
         pushScores();
 
+        // intro: grid colors bloom in while the camera settles
+        if (!REDUCED_MOTION) {
+          map.setPaintProperty(GRID_FILL, 'fill-opacity-transition', { duration: 0, delay: 0 } as any);
+          map.setPaintProperty(GRID_FILL, 'fill-opacity', 0);
+          window.setTimeout(() => {
+            map.setPaintProperty(GRID_FILL, 'fill-opacity-transition', { duration: 1600, delay: 300 } as any);
+            map.setPaintProperty(GRID_FILL, 'fill-opacity', 0.78);
+            map.easeTo({ ...HOME, duration: 2800, easing: (t) => 1 - Math.pow(1 - t, 3) });
+            // restore snappy transitions once the intro has finished
+            window.setTimeout(() => {
+              map.setPaintProperty(GRID_FILL, 'fill-opacity-transition', { duration: 300, delay: 0 } as any);
+            }, 2400);
+          }, 150);
+        }
+
         // hover tooltip element (numeric relief for the color ramp)
         const tip = document.createElement('div');
         tip.className = 'cell-tip tnum';
@@ -150,7 +169,8 @@ export default function MapView() {
           const cellId = (f.properties as any).cellId as string;
           useAppStore.getState().setHover(cellId);
           const st = useAppStore.getState();
-          const v = isValid(st.layers) ? cellScore(cellId, st.layers, st.scores) : null;
+          const eff = st.previewLayers ?? st.layers;
+          const v = isValid(eff) ? cellScore(cellId, eff, st.scores) : null;
           tip.textContent = `${cellId.toUpperCase()} · ${v == null ? '—' : Math.round(v * 100)}`;
           tip.style.display = 'block';
           const maxX = map.getCanvas().clientWidth - 110;
@@ -184,8 +204,9 @@ export default function MapView() {
     if (!map || !readyRef.current || !map.getSource(GRID_SRC)) return;
     const st = useAppStore.getState();
     const cells = st.grid!.cells;
-    const valid = isValid(st.layers);
-    const scores = computeAllScores(cells, st.layers, st.scores);
+    const effLayers = st.previewLayers ?? st.layers; // preset hover-preview
+    const valid = isValid(effLayers);
+    const scores = computeAllScores(cells, effLayers, st.scores);
     for (let i = 0; i < cells.length; i++) {
       map.setFeatureState({ source: GRID_SRC, id: i }, { score: scores[i] < 0 ? null : scores[i] });
     }
@@ -219,6 +240,9 @@ export default function MapView() {
         // live re-animate radial if a cell is selected & valid
         if (s.selectedCell && isValid(s.layers)) reanimateRadial(s.selectedCell);
         else if (!isValid(s.layers)) { /* freeze radial */ }
+      } else if (s.previewLayers !== prev.previewLayers) {
+        // preview repaints the heatmap only; radial stays on committed weights
+        pushScores();
       }
     });
     return unsub;

@@ -6,8 +6,10 @@ export default function Legend() {
   const cvd = useAppStore((s) => s.ui.cvdSafeRamp);
   const relative = useAppStore((s) => s.ui.relativeRamp);
   const grid = useAppStore((s) => s.grid);
-  const layers = useAppStore((s) => s.layers);
+  const committed = useAppStore((s) => s.layers);
+  const preview = useAppStore((s) => s.previewLayers);
   const scores = useAppStore((s) => s.scores);
+  const layers = preview ?? committed;
 
   const valid = isValid(layers);
   const domain = useMemo<[number, number]>(() => {

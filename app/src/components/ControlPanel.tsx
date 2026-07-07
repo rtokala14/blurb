@@ -11,6 +11,7 @@ export default function ControlPanel() {
   const toggleEnabled = useAppStore((s) => s.toggleEnabled);
   const removeLayer = useAppStore((s) => s.removeLayer);
   const applyPreset = useAppStore((s) => s.applyPreset);
+  const setPreview = useAppStore((s) => s.setPreview);
   const autoBalance = useAppStore((s) => s.autoBalance);
   const activePreset = useAppStore((s) => s.activePreset);
   const setUi = useAppStore((s) => s.setUi);
@@ -46,6 +47,11 @@ export default function ControlPanel() {
               key={p.id}
               className={`chip preset ${activePreset === p.id ? 'on' : ''}`}
               onClick={() => applyPreset(p.id)}
+              onMouseEnter={() => setPreview(p.weights)}
+              onMouseLeave={() => setPreview(null)}
+              onFocus={() => setPreview(p.weights)}
+              onBlur={() => setPreview(null)}
+              title={`Hover to preview, click to apply`}
             >
               {p.name}
             </button>

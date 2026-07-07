@@ -36,6 +36,9 @@ interface AppState {
 
   layers: WorkingLayer[];
   savedWeights: Record<string, number>; // remembered weight when disabled
+  // Transient working set shown while hovering a preset chip; never committed
+  // to history. Null when no preview is active.
+  previewLayers: WorkingLayer[] | null;
 
   selectedCell: string | null;
   hoverCell: string | null;
@@ -55,6 +58,7 @@ interface AppState {
   autoBalance: () => void;
   undo: () => void;
   applyPreset: (id: string) => void;
+  setPreview: (weights: Record<string, number> | null) => void;
   selectCell: (id: string | null) => void;
   setHover: (id: string | null) => void;
   toggleOverlay: (id: string) => void;
@@ -72,6 +76,7 @@ export const useAppStore = create<AppState>((set) => ({
   catalogById: {},
   layers: [],
   savedWeights: {},
+  previewLayers: null,
   selectedCell: null,
   hoverCell: null,
   overlays: { expressway: false, railway: false, statehighway: false, river: false },
@@ -149,7 +154,18 @@ export const useAppStore = create<AppState>((set) => ({
         if (!existing.has(lid)) layers.push({ id: lid, weight: 0, enabled: true });
       }
       layers = applyWeights(layers, preset.weights);
-      return { history: pushHistory(s), layers, activePreset: id };
+      return { history: pushHistory(s), layers, activePreset: id, previewLayers: null };
+    }),
+
+  setPreview: (weights) =>
+    set((s) => {
+      if (!weights) return { previewLayers: null };
+      const existing = new Set(s.layers.map((l) => l.id));
+      const layers = [...s.layers];
+      for (const lid of Object.keys(weights)) {
+        if (!existing.has(lid)) layers.push({ id: lid, weight: 0, enabled: true });
+      }
+      return { previewLayers: applyWeights(layers, weights) };
     }),
 
   selectCell: (id) => set({ selectedCell: id }),
