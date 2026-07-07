@@ -30,7 +30,7 @@ import {
 } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
 import { Separator } from "@/components/ui/separator"
-import { relativeTime } from "@/lib/format"
+import { TimeAgo } from "@/components/time-ago"
 import { useOrbit } from "@/lib/store"
 import type { ActivityItem } from "@/lib/types"
 
@@ -118,7 +118,7 @@ export default function DashboardPage() {
               </CardAction>
             </CardHeader>
             <CardFooter className="text-muted-foreground text-xs">
-              Last sync {relativeTime(sites[0].lastSyncedAt)}
+              Last sync <TimeAgo iso={sites[0].lastSyncedAt} />
             </CardFooter>
           </Card>
           <Card className="gap-2">
@@ -234,7 +234,7 @@ export default function DashboardPage() {
                     <div className="min-w-0">
                       <p className="truncate text-sm leading-tight">{item.text}</p>
                       <p className="text-muted-foreground truncate text-xs">
-                        {item.detail} · {relativeTime(item.time)}
+                        {item.detail} · <TimeAgo iso={item.time} />
                       </p>
                     </div>
                   </div>
@@ -268,7 +268,7 @@ export default function DashboardPage() {
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm">{doc.name}</p>
                     <p className="text-muted-foreground text-xs">
-                      {doc.owner} · {relativeTime(doc.updatedAt)}
+                      {doc.owner} · <TimeAgo iso={doc.updatedAt} />
                     </p>
                   </div>
                   {doc.source === "sharepoint" && (
@@ -306,7 +306,7 @@ export default function DashboardPage() {
                     <p className="truncate text-sm">{session.title}</p>
                     <p className="text-muted-foreground text-xs">
                       {session.scopeDocIds.length} documents in scope ·{" "}
-                      {relativeTime(session.updatedAt)}
+                      <TimeAgo iso={session.updatedAt} />
                     </p>
                   </div>
                   <ArrowRight className="text-muted-foreground size-4" />

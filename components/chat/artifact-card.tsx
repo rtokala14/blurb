@@ -10,7 +10,7 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
-import { relativeTime } from "@/lib/format"
+import { TimeAgo } from "@/components/time-ago"
 import { useOrbit } from "@/lib/store"
 import type { ArtifactKind } from "@/lib/types"
 
@@ -68,7 +68,7 @@ export function ArtifactCard({ artifactId }: { artifactId: string }) {
             <span className="thinking-shimmer">Generating draft…</span>
           ) : (
             <>
-              {meta.label} · updated {relativeTime(artifact.updatedAt)}
+              {meta.label} · updated <TimeAgo iso={artifact.updatedAt} />
             </>
           )}
         </p>

@@ -27,7 +27,8 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
-import { formatDate, formatSize, relativeTime } from "@/lib/format"
+import { formatDate, formatSize } from "@/lib/format"
+import { TimeAgo } from "@/components/time-ago"
 import { versionsFor } from "@/lib/data"
 import { useOrbit } from "@/lib/store"
 import type { Doc, DocStatus } from "@/lib/types"
@@ -137,7 +138,7 @@ export function DocPreviewSheet({
                 </div>
                 <div>
                   <dt className="text-muted-foreground text-xs">Updated</dt>
-                  <dd>{relativeTime(doc.updatedAt)}</dd>
+                  <dd><TimeAgo iso={doc.updatedAt} /></dd>
                 </div>
               </dl>
 

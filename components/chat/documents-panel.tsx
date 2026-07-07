@@ -33,7 +33,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
-import { relativeTime } from "@/lib/format"
+import { TimeAgo } from "@/components/time-ago"
 import { useOrbit } from "@/lib/store"
 import { useSharePointSync } from "@/lib/use-sharepoint-sync"
 import type { ChatSession, Doc, DocFolder } from "@/lib/types"
@@ -318,7 +318,7 @@ export function DocumentsPanel({
                         <p className="text-muted-foreground text-[10px]">
                           {site.state === "syncing"
                             ? "Syncing…"
-                            : `Synced ${relativeTime(site.lastSyncedAt)}`}
+                            : <>Synced <TimeAgo iso={site.lastSyncedAt} /></>}
                           {site.attentionCount > 0 &&
                             ` · ${site.attentionCount} conflicts`}
                         </p>

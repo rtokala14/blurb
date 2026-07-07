@@ -79,7 +79,8 @@ import {
   ToggleGroup,
   ToggleGroupItem,
 } from "@/components/ui/toggle-group"
-import { formatSize, relativeTime } from "@/lib/format"
+import { formatSize } from "@/lib/format"
+import { TimeAgo } from "@/components/time-ago"
 import { uid, useOrbit } from "@/lib/store"
 import { useSharePointSync } from "@/lib/use-sharepoint-sync"
 import type { Doc } from "@/lib/types"
@@ -336,7 +337,7 @@ export function DocumentsView() {
               <span className="font-medium">{currentFolder?.sharePointPath}</span>
             </p>
             <span className="text-muted-foreground text-xs">
-              Last synced {relativeTime(site.lastSyncedAt)}
+              Last synced <TimeAgo iso={site.lastSyncedAt} />
             </span>
             {site.attentionCount > 0 && (
               <Badge variant="destructive" className="tabular-nums">
@@ -419,7 +420,7 @@ export function DocumentsView() {
                           {doc.owner}
                         </TableCell>
                         <TableCell className="text-muted-foreground">
-                          {relativeTime(doc.updatedAt)}
+                          <TimeAgo iso={doc.updatedAt} />
                         </TableCell>
                         <TableCell className="text-muted-foreground text-right tabular-nums">
                           {formatSize(doc.sizeKB)}
@@ -456,7 +457,7 @@ export function DocumentsView() {
                         </p>
                       </div>
                       <p className="text-muted-foreground text-xs">
-                        {doc.owner} · {relativeTime(doc.updatedAt)}
+                        {doc.owner} · <TimeAgo iso={doc.updatedAt} />
                       </p>
                     </Card>
                   </ContextMenuTrigger>

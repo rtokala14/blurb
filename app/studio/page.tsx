@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/empty"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { cn } from "@/lib/utils"
-import { relativeTime } from "@/lib/format"
+import { TimeAgo } from "@/components/time-ago"
 import { useOrbit } from "@/lib/store"
 
 export default function StudioPage() {
@@ -84,7 +84,7 @@ export default function StudioPage() {
                     {artifact.lastEditSummary ?? "AI draft"}
                   </p>
                   <p className="text-muted-foreground mt-1 text-[10px]">
-                    Updated {relativeTime(artifact.updatedAt)} ·{" "}
+                    Updated <TimeAgo iso={artifact.updatedAt} /> ·{" "}
                     {artifact.sourceDocIds.length} sources
                   </p>
                 </button>

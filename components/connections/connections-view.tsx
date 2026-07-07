@@ -40,7 +40,7 @@ import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
-import { relativeTime } from "@/lib/format"
+import { TimeAgo } from "@/components/time-ago"
 import { useOrbit } from "@/lib/store"
 import { useSharePointSync } from "@/lib/use-sharepoint-sync"
 
@@ -156,7 +156,7 @@ export function ConnectionsView() {
                       </Link>
                     </span>
                     <span>{site.docCount} documents</span>
-                    <span>Last synced {relativeTime(site.lastSyncedAt)}</span>
+                    <span>Last synced <TimeAgo iso={site.lastSyncedAt} /></span>
                     <label className="ml-auto flex items-center gap-2">
                       Auto-sync hourly
                       <Switch
