@@ -16,9 +16,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Orbit Docs — Enterprise Document Intelligence",
+  title: "Orbit Docs — Jacobs Engineering Solutions",
   description:
-    "Upload, organize, and sync documents, then chat with an AI grounded in your library.",
+    "Enterprise document intelligence for Jacobs: upload, organize, and sync documents, then chat with an AI grounded in your library.",
 };
 
 export default function RootLayout({

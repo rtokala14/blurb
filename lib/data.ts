@@ -374,7 +374,7 @@ export const seedSites: SharePointSite[] = [
   {
     id: "sp-ops",
     name: "Operations Hub",
-    url: "https://contoso.sharepoint.com/sites/operations",
+    url: "https://jacobs.sharepoint.com/sites/operations",
     mappedFolderId: "f-sp-ops",
     lastSyncedAt: "2026-07-07T06:00:00Z",
     docCount: 3,
@@ -384,7 +384,7 @@ export const seedSites: SharePointSite[] = [
   {
     id: "sp-sales",
     name: "Sales Enablement",
-    url: "https://contoso.sharepoint.com/sites/sales",
+    url: "https://jacobs.sharepoint.com/sites/sales",
     mappedFolderId: "f-sp-sales",
     lastSyncedAt: "2026-07-06T22:30:00Z",
     docCount: 3,
@@ -820,7 +820,7 @@ export const seedActivity: ActivityItem[] = [
   {
     id: "act-6",
     kind: "share",
-    text: "Response sent as email to legal@contoso.com",
+    text: "Response sent as email to legal@jacobs.com",
     detail: "Acme termination rights summary",
     time: "2026-07-06T15:35:00Z",
   },

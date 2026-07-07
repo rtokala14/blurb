@@ -71,13 +71,13 @@ export function AppSidebar() {
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" asChild>
               <Link href="/">
-                <div className="bg-primary text-primary-foreground flex aspect-square size-8 items-center justify-center rounded-lg">
+                <div className="from-primary to-chart-1 text-primary-foreground flex aspect-square size-8 items-center justify-center rounded-lg bg-gradient-to-br">
                   <Orbit className="size-4" />
                 </div>
                 <div className="grid flex-1 text-left leading-tight">
                   <span className="truncate font-semibold">Orbit Docs</span>
                   <span className="text-muted-foreground truncate text-xs">
-                    Contoso · Enterprise
+                    Jacobs · Engineering Solutions
                   </span>
                 </div>
               </Link>

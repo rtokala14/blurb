@@ -93,7 +93,7 @@ export function ConnectionsView() {
               </Badge>
             </CardTitle>
             <CardDescription>
-              Signed in as tokalarr@gmail.com · tenant contoso.sharepoint.com
+              Signed in as tokalarr@gmail.com · tenant jacobs.sharepoint.com
             </CardDescription>
             <CardAction>
               <Button
@@ -230,7 +230,7 @@ export function ConnectionsView() {
             <Label htmlFor="site-url">Site URL</Label>
             <Input
               id="site-url"
-              placeholder="https://contoso.sharepoint.com/sites/…"
+              placeholder="https://jacobs.sharepoint.com/sites/…"
               value={siteUrl}
               onChange={(e) => setSiteUrl(e.target.value)}
             />

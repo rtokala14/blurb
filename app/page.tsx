@@ -70,6 +70,10 @@ export default function DashboardPage() {
       <div className="mx-auto max-w-6xl space-y-6 p-6">
         <div className="flex items-end justify-between">
           <div>
+            <p className="text-chart-1 mb-1 flex items-center gap-1.5 text-[11px] font-semibold tracking-[0.18em]">
+              <span className="bg-chart-1 inline-block size-1.5 rounded-full" />
+              JACOBS · ENGINEERING SOLUTIONS
+            </p>
             <h1 className="text-2xl font-semibold tracking-tight">
               Good morning, Rohit
             </h1>

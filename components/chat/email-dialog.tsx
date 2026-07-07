@@ -94,7 +94,7 @@ export function EmailDialog({
     [message.citations, docs]
   )
 
-  const [to, setTo] = React.useState("legal@contoso.com")
+  const [to, setTo] = React.useState("legal@jacobs.com")
   const [subject, setSubject] = React.useState(`Summary: ${session.title}`)
   const [tone, setTone] = React.useState<Tone>("neutral")
   const [length, setLength] = React.useState<Length>("detailed")

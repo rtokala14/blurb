@@ -8,14 +8,14 @@ import {
   FolderSearch,
   GitBranch,
   ListTree,
-  PanelLeftClose,
+  PanelRight,
   PenSquare,
   PencilLine,
   Sparkles,
 } from "lucide-react"
 
 import { Composer } from "@/components/chat/composer"
-import { ContextPanel } from "@/components/chat/context-panel"
+import { DocumentsPanel } from "@/components/chat/documents-panel"
 import { ExportDialog } from "@/components/chat/export-dialog"
 import { Message } from "@/components/chat/message"
 import { TurnsNavigator } from "@/components/chat/turns-navigator"
@@ -71,8 +71,13 @@ export function ChatWorkspace() {
   const session = sessions.find((s) => s.id === activeSessionId) ?? sessions[0]
   const openArtifact = artifacts.find((a) => a.id === openArtifactId) ?? null
 
-  const [contextOpen, setContextOpen] = React.useState(false)
+  const [contextOpen, setContextOpen] = React.useState(true)
   const [turnsOpen, setTurnsOpen] = React.useState(true)
+
+  /* give the Studio room when an artifact opens */
+  React.useEffect(() => {
+    if (openArtifactId) setContextOpen(false)
+  }, [openArtifactId])
   const [exportOpen, setExportOpen] = React.useState(false)
   const [renaming, setRenaming] = React.useState(false)
   const [titleDraft, setTitleDraft] = React.useState("")
@@ -139,34 +144,11 @@ export function ChatWorkspace() {
 
   return (
     <div className="flex min-h-0 flex-1">
-      {/* Context scope panel */}
-      {contextOpen && (
-        <aside className="w-80 shrink-0 border-r">
-          <ContextPanel session={session} onClose={() => setContextOpen(false)} />
-        </aside>
-      )}
-
       <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1">
         <ResizablePanel defaultSize={openArtifact ? 55 : 100} minSize={35}>
           <div className="flex h-full min-h-0 flex-col">
             {/* Session header */}
             <div className="flex h-12 shrink-0 items-center gap-2 border-b px-3">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label="Toggle context panel"
-                    onClick={() => setContextOpen((v) => !v)}
-                  >
-                    {contextOpen ? <PanelLeftClose /> : <FolderSearch />}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {contextOpen ? "Hide" : "Show"} context scope
-                </TooltipContent>
-              </Tooltip>
-
               {renaming ? (
                 <div className="flex items-center gap-1">
                   <Input
@@ -269,6 +251,21 @@ export function ChatWorkspace() {
                   </TooltipTrigger>
                   <TooltipContent>Export session</TooltipContent>
                 </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant={contextOpen ? "secondary" : "ghost"}
+                      size="icon-sm"
+                      aria-label="Toggle documents panel"
+                      onClick={() => setContextOpen((v) => !v)}
+                    >
+                      <PanelRight />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {contextOpen ? "Hide" : "Show"} documents panel
+                  </TooltipContent>
+                </Tooltip>
               </div>
             </div>
 
@@ -278,8 +275,8 @@ export function ChatWorkspace() {
                 {path.length === 0 ? (
                   <div className="flex h-full flex-col items-center justify-center gap-6 p-8">
                     <div className="text-center">
-                      <div className="bg-primary/5 border-primary/20 mx-auto mb-4 flex size-12 items-center justify-center rounded-full border">
-                        <Sparkles className="text-primary size-5" />
+                      <div className="from-primary to-chart-1 text-primary-foreground mx-auto mb-4 flex size-12 items-center justify-center rounded-xl bg-gradient-to-br shadow-sm">
+                        <Sparkles className="size-5" />
                       </div>
                       <h2 className="text-lg font-semibold">
                         Ask across your library
@@ -300,7 +297,7 @@ export function ChatWorkspace() {
                         <button
                           key={s}
                           onClick={() => sim.send(s)}
-                          className="hover:bg-accent text-muted-foreground hover:text-foreground rounded-lg border px-3 py-2 text-left text-sm transition-colors"
+                          className="hover:bg-accent text-muted-foreground hover:text-foreground hover:border-ring/50 rounded-lg border px-3 py-2 text-left text-sm transition-colors"
                         >
                           {s}
                         </button>
@@ -354,6 +351,16 @@ export function ChatWorkspace() {
           </>
         )}
       </ResizablePanelGroup>
+
+      {/* Documents panel (right, collapsible) */}
+      {contextOpen && (
+        <aside className="w-80 shrink-0">
+          <DocumentsPanel
+            session={session}
+            onClose={() => setContextOpen(false)}
+          />
+        </aside>
+      )}
 
       <ExportDialog
         session={session}
