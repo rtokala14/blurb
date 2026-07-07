@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { CheckCircle2, CloudUpload, FilePlus2, X } from "lucide-react"
+import { CheckCircle2, CloudUpload, FilePlus2, Mail, X } from "lucide-react"
 import { toast } from "sonner"
 
 import { DocIcon } from "@/components/doc-icon"
@@ -14,6 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Progress } from "@/components/ui/progress"
 import {
@@ -23,6 +24,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Switch } from "@/components/ui/switch"
 import { cn } from "@/lib/utils"
 import { formatSize } from "@/lib/format"
 import { uid, useOrbit } from "@/lib/store"
@@ -81,8 +83,17 @@ export function UploadDialog({
   )
   const [dragging, setDragging] = React.useState(false)
   const [running, setRunning] = React.useState(false)
+  const [notifyEnabled, setNotifyEnabled] = React.useState(true)
+  const [notifyEmail, setNotifyEmail] = React.useState("tokalarr@gmail.com")
   const inputRef = React.useRef<HTMLInputElement>(null)
   const timers = React.useRef<ReturnType<typeof setInterval>[]>([])
+  /** the in-flight batch: notify once when every doc in it is ready */
+  const batchRef = React.useRef<{
+    ids: string[]
+    email: string
+    enabled: boolean
+    notified: boolean
+  } | null>(null)
 
   React.useEffect(() => {
     if (defaultFolderId) setFolderId(defaultFolderId)
@@ -124,12 +135,70 @@ export function UploadDialog({
     }
   }
 
+  /** POST the batch to the SendGrid-backed notification route. */
+  const maybeNotify = React.useCallback(() => {
+    const batch = batchRef.current
+    if (!batch || !batch.enabled || batch.notified) return
+    const { docs: currentDocs, folders: currentFolders, pushActivity: track } =
+      useOrbit.getState()
+    const batchDocs = batch.ids
+      .map((id) => currentDocs.find((d) => d.id === id))
+      .filter((d): d is NonNullable<typeof d> => !!d)
+    if (batchDocs.length === 0 || !batchDocs.every((d) => d.status === "ready"))
+      return
+    batch.notified = true
+    fetch("/api/notify-indexed", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        to: batch.email,
+        folderName: currentFolders.find((f) => f.id === batchDocs[0].folderId)
+          ?.name,
+        files: batchDocs.map((d) => ({ name: d.name, pages: d.pages })),
+      }),
+    })
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({}))
+        if (data.sent) {
+          toast.success("Notification email sent", {
+            description: `${batch.email} · via SendGrid`,
+          })
+        } else if (data.simulated) {
+          toast("Batch indexed — notification simulated", {
+            description: `Would email ${batch.email}. Add SENDGRID_API_KEY to send for real.`,
+            icon: <Mail className="size-4" />,
+          })
+        } else {
+          toast.error("Notification email failed", {
+            description: data.error ?? `HTTP ${res.status}`,
+          })
+        }
+        track({
+          kind: "share",
+          text: `Indexing notification for ${batchDocs.length} ${
+            batchDocs.length === 1 ? "document" : "documents"
+          }`,
+          detail: `${batch.email}${data.simulated ? " (simulated)" : ""}`,
+        })
+      })
+      .catch(() => {
+        toast.error("Notification email failed", {
+          description: "Could not reach the notification service.",
+        })
+      })
+  }, [])
+
   const start = () => {
     setRunning(true)
+    const batchIds: string[] = []
     setFiles((prev) =>
       prev.map((file) => {
-        if (file.docId) return file
+        if (file.docId) {
+          batchIds.push(file.docId)
+          return file
+        }
         const docId = uid("d")
+        batchIds.push(docId)
         const doc: Doc = {
           id: docId,
           name: file.name,
@@ -173,12 +242,19 @@ export function UploadDialog({
           if (next >= 100) {
             clearInterval(timer)
             toast.success(`${file.name} is indexed and ready`)
+            maybeNotify()
           }
         }, 350)
         timers.current.push(timer)
         return { ...file, docId }
       })
     )
+    batchRef.current = {
+      ids: batchIds,
+      email: notifyEmail.trim(),
+      enabled: notifyEnabled && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(notifyEmail),
+      notified: false,
+    }
     pushActivity({
       kind: "upload",
       text: `Uploaded ${files.length} ${files.length === 1 ? "file" : "files"}`,
@@ -328,6 +404,37 @@ export function UploadDialog({
                 ))}
             </SelectContent>
           </Select>
+        </div>
+
+        {/* Per-batch indexing notification (SendGrid) */}
+        <div className="space-y-2.5 rounded-md border p-3">
+          <div className="flex items-center gap-2">
+            <Mail className="text-muted-foreground size-4" />
+            <Label htmlFor="notify-toggle" className="flex-1 font-normal">
+              Email me when this batch finishes indexing
+            </Label>
+            <Switch
+              id="notify-toggle"
+              checked={notifyEnabled}
+              onCheckedChange={setNotifyEnabled}
+              disabled={running}
+            />
+          </div>
+          {notifyEnabled && (
+            <div className="flex items-center gap-2 pl-6">
+              <Input
+                type="email"
+                value={notifyEmail}
+                onChange={(e) => setNotifyEmail(e.target.value)}
+                placeholder="you@jacobs.com"
+                disabled={running}
+                className="h-8 text-sm"
+              />
+              <span className="text-muted-foreground shrink-0 text-[10px]">
+                via SendGrid
+              </span>
+            </div>
+          )}
         </div>
 
         <DialogFooter>

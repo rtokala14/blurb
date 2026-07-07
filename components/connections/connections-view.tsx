@@ -10,6 +10,7 @@ import {
   Cloud,
   ExternalLink,
   FolderSync,
+  Mail,
   Plus,
   RefreshCw,
   ShieldCheck,
@@ -57,6 +58,15 @@ export function ConnectionsView() {
   const syncSite = useSharePointSync()
   const [addOpen, setAddOpen] = React.useState(false)
   const [siteUrl, setSiteUrl] = React.useState("")
+  /** null = still checking, then live/simulated from the API route */
+  const [sendgridLive, setSendgridLive] = React.useState<boolean | null>(null)
+
+  React.useEffect(() => {
+    fetch("/api/notify-indexed")
+      .then((res) => res.json())
+      .then((data) => setSendgridLive(Boolean(data.configured)))
+      .catch(() => setSendgridLive(false))
+  }, [])
 
   /* deep link: /connections?sync=1 kicks off a sync of every site */
   const syncedOnLoad = React.useRef(false)
@@ -194,6 +204,45 @@ export function ConnectionsView() {
             Sync honors SharePoint permissions — users only query documents
             they can already open.
           </CardFooter>
+        </Card>
+
+        {/* SendGrid notifications */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Mail className="text-chart-1 size-4" />
+              Email notifications
+              {sendgridLive === null ? (
+                <Badge variant="outline" className="gap-1">
+                  <Spinner className="size-3" /> Checking
+                </Badge>
+              ) : sendgridLive ? (
+                <Badge variant="secondary" className="gap-1">
+                  <ShieldCheck className="size-3" /> Live via SendGrid
+                </Badge>
+              ) : (
+                <Badge variant="outline">Simulated — no API key</Badge>
+              )}
+            </CardTitle>
+            <CardDescription>
+              Per-batch “indexing complete” emails, sent through SendGrid.
+              Toggle it on any upload — you&apos;ll get one email when the
+              whole batch is searchable.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="text-muted-foreground space-y-1.5 text-xs">
+            <p>
+              To go live, set these in <code className="bg-muted rounded px-1 py-0.5">.env.local</code>{" "}
+              (see <code className="bg-muted rounded px-1 py-0.5">.env.example</code>):
+            </p>
+            <pre className="bg-muted overflow-x-auto rounded-md p-2.5 font-mono">
+              {"SENDGRID_API_KEY=SG.xxxxx\nSENDGRID_FROM_EMAIL=notifications@jacobs.com"}
+            </pre>
+            <p>
+              Until then, batches complete with a simulated notification so the
+              flow can be reviewed end to end.
+            </p>
+          </CardContent>
         </Card>
 
         {/* Coming soon */}

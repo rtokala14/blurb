@@ -17,6 +17,14 @@ bun dev        # http://localhost:3000
 
 `bun run build` produces a production build; `bun start` serves it.
 
+### SendGrid (optional)
+
+Per-batch "email me when indexing is done" notifications post to
+`/api/notify-indexed`, which delivers through SendGrid. Copy `.env.example`
+to `.env.local` and set `SENDGRID_API_KEY` (+ a verified
+`SENDGRID_FROM_EMAIL`) to send real email — without a key the route answers
+in simulated mode so the flow still completes end to end.
+
 ## What's inside
 
 ### App shell
@@ -46,6 +54,8 @@ bun dev        # http://localhost:3000
   answer to fork; switch branches with `‹ 2/3 ›` controls; branch points flagged
 - **Turns navigator** — session outline rail with citation/artifact/branch markers
 - **Session export** — PDF/Markdown/Word with citation appendix & reasoning options
+- **Per-message download** — save any assistant response as real `.md`, `.pdf`
+  (jsPDF), or `.docx` (docx) files, with or without the references section
 - **Refine & send as email** — tone/length controls, AI rewrite streamed live,
   citation → source-list conversion, simulated send
 - Slash commands (`/doc`, `/sheet`, `/deck`) for AI-assisted creation

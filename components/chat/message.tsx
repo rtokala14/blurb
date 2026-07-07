@@ -4,7 +4,10 @@ import * as React from "react"
 import {
   Check,
   Copy,
+  Download,
   FileSearch,
+  FileText,
+  FileType2,
   Mail,
   Orbit,
   PencilLine,
@@ -24,6 +27,15 @@ import { ThinkingIndicator } from "@/components/chat/thinking-indicator"
 import { PdfViewerDialog } from "@/components/pdf-viewer-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Textarea } from "@/components/ui/textarea"
 import {
   Tooltip,
@@ -31,6 +43,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
+import { downloadMessage, type ExportFormat } from "@/lib/export-message"
 import { useOrbit } from "@/lib/store"
 import type { ChatMessage, ChatSession, Citation } from "@/lib/types"
 
@@ -79,6 +92,24 @@ export function Message({
   const [emailOpen, setEmailOpen] = React.useState(false)
   const [openCitation, setOpenCitation] = React.useState<Citation | null>(null)
   const [vote, setVote] = React.useState<"up" | "down" | null>(null)
+  const [includeRefs, setIncludeRefs] = React.useState(true)
+
+  const download = async (format: ExportFormat) => {
+    try {
+      const name = await downloadMessage(
+        format,
+        message,
+        docs,
+        session.title,
+        includeRefs
+      )
+      toast.success("Downloaded", {
+        description: `${name}${includeRefs ? " · with references" : " · without references"}`,
+      })
+    } catch {
+      toast.error("Download failed")
+    }
+  }
 
   const copy = () => {
     navigator.clipboard
@@ -246,6 +277,43 @@ export function Message({
             <ActionButton label="Regenerate (new branch)" onClick={() => onRegenerate(message)}>
               <RefreshCw />
             </ActionButton>
+            <DropdownMenu>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      className="text-muted-foreground hover:text-foreground size-7"
+                      aria-label="Download response"
+                    >
+                      <Download />
+                    </Button>
+                  </DropdownMenuTrigger>
+                </TooltipTrigger>
+                <TooltipContent>Download response</TooltipContent>
+              </Tooltip>
+              <DropdownMenuContent align="start" className="w-56">
+                <DropdownMenuLabel>Download as</DropdownMenuLabel>
+                <DropdownMenuItem onClick={() => download("md")}>
+                  <FileText /> Markdown (.md)
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => download("pdf")}>
+                  <FileType2 /> PDF (.pdf)
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => download("docx")}>
+                  <FileText /> Word (.docx)
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuCheckboxItem
+                  checked={includeRefs}
+                  onCheckedChange={(v) => setIncludeRefs(v === true)}
+                  onSelect={(e) => e.preventDefault()}
+                >
+                  Include references
+                </DropdownMenuCheckboxItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <ActionButton label="Refine & send as email" onClick={() => setEmailOpen(true)}>
               <Mail />
             </ActionButton>
