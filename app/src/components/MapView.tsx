@@ -1,17 +1,80 @@
 import { useEffect, useRef } from 'react';
 import maplibregl, { Map as MLMap, Marker } from 'maplibre-gl';
-import { useAppStore } from '../store/useAppStore';
+import { useAppStore, type Basemap } from '../store/useAppStore';
 import { computeAllScores, cellScore, isValid, rampExpression, scoreDomain, contributions } from '../lib/score';
 import { RadialChart } from './RadialChart';
 
-const CARTO = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
 const GLYPHS = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/fonts/{fontstack}/{range}.pbf';
 
-const FALLBACK_STYLE: any = {
+// Inline fallback when a vector style fetch fails — the grid still renders.
+// Background tone follows the requested basemap so an offline 'light' swap
+// doesn't strand the light UI on a black void.
+const fallbackStyle = (bg: string): any => ({
   version: 8,
   glyphs: GLYPHS,
   sources: {},
-  layers: [{ id: 'bg', type: 'background', paint: { 'background-color': '#0d0d0d' } }],
+  layers: [{ id: 'bg', type: 'background', paint: { 'background-color': bg } }],
+});
+const FALLBACK_BG: Partial<Record<Basemap, string>> = { dark: '#0d0d0d', light: '#e9e7e2' };
+
+// Vector styles are fetched (with the dark fallback); raster basemaps are
+// built inline so they need no style fetch — only tiles, which can also fail
+// gracefully (grid still renders over the background color).
+const STYLE_URLS: Partial<Record<Basemap, string>> = {
+  dark: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+  light: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+};
+
+const rasterStyle = (tiles: string, attribution: string, bg: string): any => ({
+  version: 8,
+  glyphs: GLYPHS,
+  sources: {
+    basemap: { type: 'raster', tiles: [tiles], tileSize: 256, maxzoom: 19, attribution },
+  },
+  layers: [
+    { id: 'bg', type: 'background', paint: { 'background-color': bg } },
+    { id: 'basemap', type: 'raster', source: 'basemap' },
+  ],
+});
+
+const RASTER_STYLES: Partial<Record<Basemap, any>> = {
+  satellite: rasterStyle(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    'Esri, Maxar, Earthstar Geographics',
+    '#1a231d'
+  ),
+  terrain: rasterStyle(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
+    'Esri, USGS, NOAA',
+    '#e8e6de'
+  ),
+};
+
+const styleCache: Partial<Record<Basemap, any>> = {};
+
+async function buildStyle(basemap: Basemap): Promise<any> {
+  if (RASTER_STYLES[basemap]) return RASTER_STYLES[basemap];
+  if (styleCache[basemap]) return styleCache[basemap];
+  try {
+    const r = await fetch(STYLE_URLS[basemap]!);
+    if (r.ok) {
+      const style = await r.json();
+      styleCache[basemap] = style;
+      return style;
+    }
+  } catch {
+    /* fall back to the inline style — grid still renders */
+  }
+  return fallbackStyle(FALLBACK_BG[basemap] ?? '#0d0d0d');
+}
+
+// Grid outline contrast per basemap: imagery needs brighter lines, the light
+// vector & topo basemaps need dark lines, dark keeps the original hairline.
+const GRID_LINE_COLOR: Record<Basemap, string> = {
+  dark: 'rgba(255,255,255,0.10)',
+  light: 'rgba(11,11,11,0.14)',
+  satellite: 'rgba(255,255,255,0.24)',
+  terrain: 'rgba(11,11,11,0.18)',
 };
 
 const GRID_SRC = 'grid-src';
@@ -30,7 +93,109 @@ export default function MapView() {
   const chipRef = useRef<Marker | null>(null);
   const tipRef = useRef<HTMLDivElement | null>(null);
   const idxByCell = useRef<Record<string, number>>({});
+  const gridFC = useRef<any>(null);
   const readyRef = useRef(false);
+  const appliedBasemap = useRef<Basemap | null>(null);
+  const prevSelIdx = useRef<number | null>(null);
+
+  // ---- (re)add every app source/layer; runs on load and after setStyle ----
+  // map.setStyle() wipes ALL custom sources, layers and feature-states, so
+  // everything the app draws must be re-addable. Each add is guarded so a
+  // double 'style.load'/initial-load overlap never throws.
+  function attachAppLayers(map: MLMap) {
+    if (!map.getSource(GRID_SRC)) {
+      map.addSource(GRID_SRC, { type: 'geojson', data: gridFC.current });
+    }
+    if (!map.getLayer(GRID_FILL)) {
+      map.addLayer({
+        id: GRID_FILL,
+        type: 'fill',
+        source: GRID_SRC,
+        paint: {
+          'fill-color': rampExpression(false),
+          'fill-opacity': 0.78,
+        },
+      });
+    }
+    if (!map.getLayer(GRID_LINE)) {
+      map.addLayer({
+        id: GRID_LINE,
+        type: 'line',
+        source: GRID_SRC,
+        paint: { 'line-color': GRID_LINE_COLOR.dark, 'line-width': 0.5 },
+      });
+    }
+    if (!map.getLayer(GRID_HOVER)) {
+      map.addLayer({
+        id: GRID_HOVER,
+        type: 'line',
+        source: GRID_SRC,
+        paint: {
+          'line-color': '#22d3ee',
+          'line-width': ['case', ['boolean', ['feature-state', 'hover'], false], 2.4, 0],
+          'line-opacity': 0.95,
+        },
+      });
+    }
+    if (!map.getLayer(GRID_SEL_GLOW)) {
+      map.addLayer({
+        id: GRID_SEL_GLOW,
+        type: 'line',
+        source: GRID_SRC,
+        paint: {
+          'line-color': '#22d3ee',
+          'line-width': ['case', ['boolean', ['feature-state', 'selected'], false], 10, 0],
+          'line-blur': 5,
+          'line-opacity': 0.45,
+        },
+      });
+    }
+    if (!map.getLayer(GRID_SEL)) {
+      map.addLayer({
+        id: GRID_SEL,
+        type: 'line',
+        source: GRID_SRC,
+        paint: {
+          'line-color': '#7ff3ff',
+          'line-width': ['case', ['boolean', ['feature-state', 'selected'], false], 2.6, 0],
+          'line-opacity': 0.95,
+        },
+      });
+    }
+    addOverlays(map);
+  }
+
+  // Restore everything setStyle wiped: layers, feature-states, paint driven
+  // by store state, overlay visibility, and the radial chart if showing.
+  function restoreAppState(map: MLMap) {
+    attachAppLayers(map);
+    if (!radialRef.current) radialRef.current = new RadialChart(map);
+    else radialRef.current.reattach();
+    readyRef.current = true;
+
+    const st = useAppStore.getState();
+
+    // grid line contrast for the active basemap
+    map.setPaintProperty(GRID_LINE, 'line-color', GRID_LINE_COLOR[st.ui.basemap]);
+
+    // (a) score feature-states + ramp/opacity paint
+    pushScores();
+
+    // (b) selected-cell feature-state
+    if (prevSelIdx.current !== null) {
+      map.setFeatureState({ source: GRID_SRC, id: prevSelIdx.current }, { selected: true });
+    }
+
+    // (c) overlay visibility from store state
+    for (const [id, vis] of Object.entries(st.overlays)) {
+      for (const suffix of ['', '-glow']) {
+        const lid = `ov-${id}${suffix}`;
+        if (map.getLayer(lid)) map.setLayoutProperty(lid, 'visibility', vis ? 'visible' : 'none');
+      }
+    }
+    // (d) radial chart re-attached above; the score chip & sector labels are
+    // HTML markers, which survive a style swap untouched.
+  }
 
   // ---- init map once data present ----
   const grid = useAppStore((s) => s.grid);
@@ -39,14 +204,23 @@ export default function MapView() {
     let cancelled = false;
 
     (async () => {
-      let style: any = FALLBACK_STYLE;
-      try {
-        const r = await fetch(CARTO);
-        if (r.ok) style = await r.json();
-      } catch {
-        /* fall back to inline dark style — grid still renders */
-      }
+      const initialBasemap = useAppStore.getState().ui.basemap;
+      const style = await buildStyle(initialBasemap);
       if (cancelled) return;
+      appliedBasemap.current = initialBasemap;
+
+      gridFC.current = {
+        type: 'FeatureCollection' as const,
+        features: grid.cells.map((c, i) => {
+          idxByCell.current[c.id] = i;
+          return {
+            type: 'Feature' as const,
+            id: i,
+            properties: { cellId: c.id, idx: i },
+            geometry: { type: 'Polygon' as const, coordinates: [c.ring] },
+          };
+        }),
+      };
 
       const map = new maplibregl.Map({
         container: 'map',
@@ -64,76 +238,10 @@ export default function MapView() {
       map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'bottom-right');
 
       map.on('load', () => {
-        // grid source
-        const fc = {
-          type: 'FeatureCollection' as const,
-          features: grid.cells.map((c, i) => {
-            idxByCell.current[c.id] = i;
-            return {
-              type: 'Feature' as const,
-              id: i,
-              properties: { cellId: c.id, idx: i },
-              geometry: { type: 'Polygon' as const, coordinates: [c.ring] },
-            };
-          }),
-        };
-        map.addSource(GRID_SRC, { type: 'geojson', data: fc });
+        restoreAppState(map);
 
-        map.addLayer({
-          id: GRID_FILL,
-          type: 'fill',
-          source: GRID_SRC,
-          paint: {
-            'fill-color': rampExpression(false),
-            'fill-opacity': 0.78,
-          },
-        });
-        map.addLayer({
-          id: GRID_LINE,
-          type: 'line',
-          source: GRID_SRC,
-          paint: { 'line-color': 'rgba(255,255,255,0.10)', 'line-width': 0.5 },
-        });
-        map.addLayer({
-          id: GRID_HOVER,
-          type: 'line',
-          source: GRID_SRC,
-          paint: {
-            'line-color': '#22d3ee',
-            'line-width': ['case', ['boolean', ['feature-state', 'hover'], false], 2.4, 0],
-            'line-opacity': 0.95,
-          },
-        });
-        map.addLayer({
-          id: GRID_SEL_GLOW,
-          type: 'line',
-          source: GRID_SRC,
-          paint: {
-            'line-color': '#22d3ee',
-            'line-width': ['case', ['boolean', ['feature-state', 'selected'], false], 10, 0],
-            'line-blur': 5,
-            'line-opacity': 0.45,
-          },
-        });
-        map.addLayer({
-          id: GRID_SEL,
-          type: 'line',
-          source: GRID_SRC,
-          paint: {
-            'line-color': '#7ff3ff',
-            'line-width': ['case', ['boolean', ['feature-state', 'selected'], false], 2.6, 0],
-            'line-opacity': 0.95,
-          },
-        });
-
-        addOverlays(map);
-        radialRef.current = new RadialChart(map);
-        readyRef.current = true;
-
-        // initial paint
-        pushScores();
-
-        // intro: grid colors bloom in while the camera settles
+        // intro: grid colors bloom in while the camera settles.
+        // Runs on first load only — never after a basemap change.
         if (!REDUCED_MOTION) {
           map.setPaintProperty(GRID_FILL, 'fill-opacity-transition', { duration: 0, delay: 0 } as any);
           map.setPaintProperty(GRID_FILL, 'fill-opacity', 0);
@@ -154,7 +262,8 @@ export default function MapView() {
         map.getContainer().appendChild(tip);
         tipRef.current = tip;
 
-        // interactions
+        // interactions — delegated by layer id, so they keep working after
+        // the layer is re-added following a basemap change
         let hoverId: number | null = null;
         map.on('mousemove', GRID_FILL, (e) => {
           map.getCanvas().style.cursor = 'pointer';
@@ -171,7 +280,7 @@ export default function MapView() {
           const st = useAppStore.getState();
           const eff = st.previewLayers ?? st.layers;
           const v = isValid(eff) ? cellScore(cellId, eff, st.scores) : null;
-          tip.textContent = `${cellId.toUpperCase()} · ${v == null ? '—' : Math.round(v * 100)}`;
+          tip.textContent = `${cellId.toUpperCase()} · ${v == null ? '—' : Math.round(v * 100) + '%'}`;
           tip.style.display = 'block';
           const maxX = map.getCanvas().clientWidth - 110;
           tip.style.transform = `translate(${Math.min(e.point.x + 14, maxX)}px, ${e.point.y + 18}px)`;
@@ -189,6 +298,7 @@ export default function MapView() {
           useAppStore.getState().selectCell((f.properties as any).cellId);
         });
         map.on('click', (e) => {
+          if (!map.getLayer(GRID_FILL)) return; // mid style-swap
           const hits = map.queryRenderedFeatures(e.point, { layers: [GRID_FILL] });
           if (hits.length === 0) useAppStore.getState().selectCell(null);
         });
@@ -197,6 +307,26 @@ export default function MapView() {
 
     return () => { cancelled = true; };
   }, [grid]);
+
+  // ---- basemap switching ----
+  const basemap = useAppStore((s) => s.ui.basemap);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !readyRef.current || appliedBasemap.current === basemap) return;
+    let cancelled = false;
+    (async () => {
+      const style = await buildStyle(basemap);
+      if (cancelled || !mapRef.current) return;
+      appliedBasemap.current = basemap;
+      readyRef.current = false; // pushScores no-ops until layers are back
+      // diff:false forces a full style reload so 'style.load' always fires
+      // (a successful diff would silently strip our layers and never fire it).
+      // Clone: setStyle may mutate the style object, and fallbacks are shared.
+      map.once('style.load', () => restoreAppState(map));
+      map.setStyle(JSON.parse(JSON.stringify(style)), { diff: false });
+    })();
+    return () => { cancelled = true; };
+  }, [basemap]);
 
   // ---- push scores to feature-state; dim on invalid ----
   function pushScores() {
@@ -250,7 +380,6 @@ export default function MapView() {
 
   // ---- selection: camera + radial ----
   const selectedCell = useAppStore((s) => s.selectedCell);
-  const prevSelIdx = useRef<number | null>(null);
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !readyRef.current) return;
@@ -313,7 +442,7 @@ export default function MapView() {
         .addTo(map);
     }
     const inner = chipRef.current.getElement().firstElementChild as HTMLElement;
-    inner.innerHTML = `<div class="chip-score tnum">${scoreVal}</div><div class="chip-label">suitability</div>`;
+    inner.innerHTML = `<div class="chip-score tnum">${scoreVal}%</div><div class="chip-label">suitability</div>`;
     chipRef.current.setLngLat(cell.centroid);
   }
 
@@ -338,52 +467,58 @@ export default function MapView() {
   );
 }
 
-// ---- overlay layers ----
+// ---- overlay layers (guarded — re-run after every basemap change) ----
 function addOverlays(map: MLMap) {
   const base = import.meta.env.BASE_URL + 'data/overlays/';
   const add = (id: string, url: string) => {
-    map.addSource(`ov-${id}-src`, { type: 'geojson', data: url });
+    if (!map.getSource(`ov-${id}-src`)) {
+      map.addSource(`ov-${id}-src`, { type: 'geojson', data: url });
+    }
   };
   add('expressway', base + 'expressway.geojson');
   add('railway', base + 'railway.geojson');
   add('statehighway', base + 'statehighway.geojson');
   add('river', base + 'river.geojson');
 
+  const addLayer = (spec: any) => {
+    if (!map.getLayer(spec.id)) map.addLayer(spec);
+  };
+
   // river (fill)
-  map.addLayer({
+  addLayer({
     id: 'ov-river', type: 'fill', source: 'ov-river-src',
     layout: { visibility: 'none' },
     paint: { 'fill-color': '#2f6fc0', 'fill-opacity': 0.35, 'fill-outline-color': '#66a3ff' },
   });
   // expressway glow + line
-  map.addLayer({
+  addLayer({
     id: 'ov-expressway-glow', type: 'line', source: 'ov-expressway-src',
     layout: { visibility: 'none', 'line-cap': 'round' },
     paint: { 'line-color': '#fab219', 'line-width': 9, 'line-opacity': 0.25, 'line-blur': 6 },
   });
-  map.addLayer({
+  addLayer({
     id: 'ov-expressway', type: 'line', source: 'ov-expressway-src',
     layout: { visibility: 'none', 'line-cap': 'round' },
     paint: { 'line-color': '#ffd166', 'line-width': 2.6, 'line-dasharray': [2, 1.4] },
   });
   // railway
-  map.addLayer({
+  addLayer({
     id: 'ov-railway-glow', type: 'line', source: 'ov-railway-src',
     layout: { visibility: 'none' },
     paint: { 'line-color': '#ffffff', 'line-width': 6, 'line-opacity': 0.14, 'line-blur': 4 },
   });
-  map.addLayer({
+  addLayer({
     id: 'ov-railway', type: 'line', source: 'ov-railway-src',
     layout: { visibility: 'none' },
     paint: { 'line-color': '#e8e8e2', 'line-width': 1.8, 'line-dasharray': [3, 2] },
   });
   // state highways
-  map.addLayer({
+  addLayer({
     id: 'ov-statehighway-glow', type: 'line', source: 'ov-statehighway-src',
     layout: { visibility: 'none' },
     paint: { 'line-color': '#22d3ee', 'line-width': 5, 'line-opacity': 0.18, 'line-blur': 4 },
   });
-  map.addLayer({
+  addLayer({
     id: 'ov-statehighway', type: 'line', source: 'ov-statehighway-src',
     layout: { visibility: 'none' },
     paint: { 'line-color': '#22d3ee', 'line-width': 1.6, 'line-opacity': 0.9 },
