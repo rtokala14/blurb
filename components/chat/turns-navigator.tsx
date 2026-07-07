@@ -1,9 +1,7 @@
 "use client"
 
-import * as React from "react"
 import { GitBranch, Quote, Sparkles } from "lucide-react"
 
-import { ScrollArea } from "@/components/ui/scroll-area"
 import {
   Tooltip,
   TooltipContent,
@@ -14,8 +12,8 @@ import { activePath, siblingsOf } from "@/lib/store"
 import type { ChatSession } from "@/lib/types"
 
 /**
- * Session outline: one entry per user turn on the active path. Click to jump;
- * branch points and artifact turns are flagged.
+ * Minimal scrollspy rail: one grey line per user turn on the active path,
+ * current turn highlighted. Hover previews the query, click jumps to it.
  */
 export function TurnsNavigator({
   session,
@@ -28,104 +26,69 @@ export function TurnsNavigator({
 }) {
   const path = activePath(session)
   const turns = path.filter((m) => m.role === "user")
+  if (turns.length === 0) return null
 
   return (
-    <div className="flex h-full w-56 flex-col border-l">
-      <div className="border-b px-3 py-2.5">
-        <h3 className="text-sm font-semibold">Turns</h3>
-        <p className="text-muted-foreground text-xs">
-          {turns.length} {turns.length === 1 ? "exchange" : "exchanges"} on this
-          branch
-        </p>
-      </div>
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="space-y-0.5 p-2">
-          {turns.map((turn, i) => {
-            const reply = path.find(
-              (m) => m.parentId === turn.id && m.role === "assistant"
-            )
-            const branched =
-              siblingsOf(session, turn).length > 1 ||
-              (reply ? siblingsOf(session, reply).length > 1 : false)
-            const citations = reply?.citations?.length ?? 0
-            const hasArtifact = (reply?.artifactIds?.length ?? 0) > 0
-            const isActive =
-              activeMessageId === turn.id || activeMessageId === reply?.id
+    <nav
+      aria-label="Turns"
+      className="absolute top-1/2 right-2.5 z-10 flex -translate-y-1/2 flex-col items-end gap-2"
+    >
+      {turns.map((turn, i) => {
+        const reply = path.find(
+          (m) => m.parentId === turn.id && m.role === "assistant"
+        )
+        const isActive =
+          activeMessageId === turn.id || activeMessageId === reply?.id
+        const branched =
+          siblingsOf(session, turn).length > 1 ||
+          (reply ? siblingsOf(session, reply).length > 1 : false)
+        const citations = reply?.citations?.length ?? 0
+        const hasArtifact = (reply?.artifactIds?.length ?? 0) > 0
 
-            return (
+        return (
+          <Tooltip key={turn.id} delayDuration={100}>
+            <TooltipTrigger asChild>
               <button
-                key={turn.id}
                 onClick={() => onJump(turn.id)}
-                className={cn(
-                  "hover:bg-accent w-full rounded-md px-2 py-2 text-left transition-colors",
-                  isActive && "bg-accent"
-                )}
+                aria-label={`Jump to turn ${i + 1}`}
+                aria-current={isActive ? "true" : undefined}
+                className="group flex h-2 items-center justify-end"
               >
-                <div className="flex items-start gap-2">
-                  <span
-                    className={cn(
-                      "mt-0.5 flex size-4.5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold tabular-nums",
-                      isActive
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-muted text-muted-foreground"
-                    )}
-                  >
-                    {i + 1}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="line-clamp-2 text-xs leading-snug">
-                      {turn.content}
-                    </p>
-                    <div className="text-muted-foreground mt-1 flex items-center gap-2 text-[10px]">
-                      {citations > 0 && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <span className="flex items-center gap-0.5">
-                              <Quote className="size-2.5" /> {citations}
-                            </span>
-                          </TooltipTrigger>
-                          <TooltipContent side="left">
-                            {citations} citations in the reply
-                          </TooltipContent>
-                        </Tooltip>
-                      )}
-                      {hasArtifact && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <span className="flex items-center gap-0.5">
-                              <Sparkles className="size-2.5" /> artifact
-                            </span>
-                          </TooltipTrigger>
-                          <TooltipContent side="left">
-                            Created an artifact
-                          </TooltipContent>
-                        </Tooltip>
-                      )}
-                      {branched && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <span className="text-chart-4 flex items-center gap-0.5">
-                              <GitBranch className="size-2.5" /> branch point
-                            </span>
-                          </TooltipTrigger>
-                          <TooltipContent side="left">
-                            Alternate branches exist here
-                          </TooltipContent>
-                        </Tooltip>
-                      )}
-                    </div>
-                  </div>
-                </div>
+                <span
+                  className={cn(
+                    "h-[3px] rounded-full transition-all duration-200",
+                    isActive
+                      ? "bg-foreground w-6"
+                      : "bg-muted-foreground/25 group-hover:bg-muted-foreground/60 w-4 group-hover:w-5"
+                  )}
+                />
               </button>
-            )
-          })}
-          {turns.length === 0 && (
-            <p className="text-muted-foreground px-2 py-4 text-xs">
-              Turns will appear here as the conversation grows.
-            </p>
-          )}
-        </div>
-      </ScrollArea>
-    </div>
+            </TooltipTrigger>
+            <TooltipContent side="left" sideOffset={8} className="max-w-64">
+              <p className="line-clamp-2">{turn.content}</p>
+              {(citations > 0 || hasArtifact || branched) && (
+                <p className="mt-1 flex items-center gap-2 opacity-70">
+                  {citations > 0 && (
+                    <span className="flex items-center gap-0.5">
+                      <Quote className="size-2.5" /> {citations}
+                    </span>
+                  )}
+                  {hasArtifact && (
+                    <span className="flex items-center gap-0.5">
+                      <Sparkles className="size-2.5" /> artifact
+                    </span>
+                  )}
+                  {branched && (
+                    <span className="flex items-center gap-0.5">
+                      <GitBranch className="size-2.5" /> branches
+                    </span>
+                  )}
+                </p>
+              )}
+            </TooltipContent>
+          </Tooltip>
+        )
+      })}
+    </nav>
   )
 }

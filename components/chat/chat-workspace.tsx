@@ -273,7 +273,7 @@ export function ChatWorkspace() {
             </div>
 
             {/* Messages + turns rail */}
-            <div className="flex min-h-0 flex-1">
+            <div className="relative flex min-h-0 flex-1">
               <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
                 {path.length === 0 ? (
                   <div className="flex h-full flex-col items-center justify-center gap-6 p-8">
