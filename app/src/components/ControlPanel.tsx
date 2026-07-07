@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { useAppStore, PRESETS } from '../store/useAppStore';
 import { isValid } from '../lib/score';
 import { fmtWeight } from '../lib/format';
@@ -7,20 +6,16 @@ import Sparkline from './Sparkline';
 
 export default function ControlPanel() {
   const layers = useAppStore((s) => s.layers);
-  const catalog = useAppStore((s) => s.catalog);
   const catalogById = useAppStore((s) => s.catalogById);
   const setWeight = useAppStore((s) => s.setWeight);
   const toggleEnabled = useAppStore((s) => s.toggleEnabled);
   const removeLayer = useAppStore((s) => s.removeLayer);
-  const addLayer = useAppStore((s) => s.addLayer);
   const applyPreset = useAppStore((s) => s.applyPreset);
   const autoBalance = useAppStore((s) => s.autoBalance);
   const activePreset = useAppStore((s) => s.activePreset);
-  const [picker, setPicker] = useState(false);
+  const setUi = useAppStore((s) => s.setUi);
 
   const valid = isValid(layers);
-  const inSet = new Set(layers.map((l) => l.id));
-  const available = catalog.filter((c) => !inSet.has(c.id));
 
   return (
     <div className="control-panel glass">
@@ -61,21 +56,8 @@ export default function ControlPanel() {
       <div className="cp-layers">
         <div className="cp-layers-head">
           <span className="overline">Layers ({layers.length})</span>
-          <button className="chip mini" onClick={() => setPicker((v) => !v)}>+ Add layer</button>
+          <button className="chip mini" onClick={() => setUi({ addLayerOpen: true })}>+ Add layer</button>
         </div>
-
-        {picker && (
-          <div className="picker glass">
-            {available.length === 0 && <div className="picker-empty">All layers added.</div>}
-            {available.map((c) => (
-              <button key={c.id} className="picker-item" onClick={() => { addLayer(c.id); setPicker(false); }}>
-                <span className="dot" style={{ background: c.color }} />
-                <span className="pi-name">{c.name}</span>
-                {c.allZero && <span className="pi-flag">no data</span>}
-              </button>
-            ))}
-          </div>
-        )}
 
         <div className="layer-list">
           {layers.map((l) => {
@@ -88,10 +70,20 @@ export default function ControlPanel() {
                   <span className="lc-name" title={def.description}>{def.name}</span>
                   {def.allZero && <span className="pi-flag" title="No data in this extract">no data</span>}
                   <label className="switch" title={l.enabled ? 'Disable' : 'Enable'}>
-                    <input type="checkbox" checked={l.enabled} onChange={() => toggleEnabled(l.id)} />
+                    <input
+                      type="checkbox"
+                      checked={l.enabled}
+                      onChange={() => toggleEnabled(l.id)}
+                      aria-label={`${l.enabled ? 'Disable' : 'Enable'} ${def.name}`}
+                    />
                     <span className="switch-track"><span className="switch-thumb" /></span>
                   </label>
-                  <button className="lc-remove" title="Remove layer" onClick={() => removeLayer(l.id)}>✕</button>
+                  <button
+                    className="lc-remove"
+                    title="Remove layer"
+                    aria-label={`Remove ${def.name}`}
+                    onClick={() => removeLayer(l.id)}
+                  >✕</button>
                 </div>
                 <div className="lc-row2">
                   <input
@@ -101,6 +93,7 @@ export default function ControlPanel() {
                     onChange={(e) => setWeight(l.id, Number(e.target.value))}
                     className="lc-slider"
                     style={{ accentColor: def.color }}
+                    aria-label={`${def.name} weight`}
                   />
                   <input
                     type="number" min={0} max={100}
@@ -108,6 +101,7 @@ export default function ControlPanel() {
                     disabled={!l.enabled}
                     onChange={(e) => setWeight(l.id, Number(e.target.value))}
                     className="lc-num tnum"
+                    aria-label={`${def.name} weight`}
                   />
                 </div>
                 <div className="lc-row3">

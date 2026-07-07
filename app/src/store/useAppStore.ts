@@ -41,7 +41,7 @@ interface AppState {
   hoverCell: string | null;
 
   overlays: Record<string, boolean>;
-  ui: { basemapLabels: boolean; cvdSafeRamp: boolean; panelOpen: boolean; relativeRamp: boolean; dockOpen: boolean };
+  ui: { basemapLabels: boolean; cvdSafeRamp: boolean; panelOpen: boolean; relativeRamp: boolean; dockOpen: boolean; addLayerOpen: boolean };
 
   history: WorkingLayer[][]; // for undo
 
@@ -75,7 +75,7 @@ export const useAppStore = create<AppState>((set) => ({
   selectedCell: null,
   hoverCell: null,
   overlays: { expressway: false, railway: false, statehighway: false, river: false },
-  ui: { basemapLabels: false, cvdSafeRamp: false, panelOpen: true, relativeRamp: true, dockOpen: true },
+  ui: { basemapLabels: false, cvdSafeRamp: false, panelOpen: true, relativeRamp: true, dockOpen: true, addLayerOpen: false },
   history: [],
   activePreset: 'balanced',
 

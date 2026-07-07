@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import maplibregl, { Map as MLMap, Marker } from 'maplibre-gl';
 import { useAppStore } from '../store/useAppStore';
-import { computeAllScores, isValid, rampExpression, scoreDomain, contributions } from '../lib/score';
+import { computeAllScores, cellScore, isValid, rampExpression, scoreDomain, contributions } from '../lib/score';
 import { RadialChart } from './RadialChart';
 
 const CARTO = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
@@ -26,6 +26,7 @@ export default function MapView() {
   const mapRef = useRef<MLMap | null>(null);
   const radialRef = useRef<RadialChart | null>(null);
   const chipRef = useRef<Marker | null>(null);
+  const tipRef = useRef<HTMLDivElement | null>(null);
   const idxByCell = useRef<Record<string, number>>({});
   const readyRef = useRef(false);
 
@@ -128,6 +129,12 @@ export default function MapView() {
         // initial paint
         pushScores();
 
+        // hover tooltip element (numeric relief for the color ramp)
+        const tip = document.createElement('div');
+        tip.className = 'cell-tip tnum';
+        map.getContainer().appendChild(tip);
+        tipRef.current = tip;
+
         // interactions
         let hoverId: number | null = null;
         map.on('mousemove', GRID_FILL, (e) => {
@@ -140,13 +147,21 @@ export default function MapView() {
           }
           hoverId = id;
           map.setFeatureState({ source: GRID_SRC, id }, { hover: true });
-          useAppStore.getState().setHover((f.properties as any).cellId);
+          const cellId = (f.properties as any).cellId as string;
+          useAppStore.getState().setHover(cellId);
+          const st = useAppStore.getState();
+          const v = isValid(st.layers) ? cellScore(cellId, st.layers, st.scores) : null;
+          tip.textContent = `${cellId.toUpperCase()} · ${v == null ? '—' : Math.round(v * 100)}`;
+          tip.style.display = 'block';
+          const maxX = map.getCanvas().clientWidth - 110;
+          tip.style.transform = `translate(${Math.min(e.point.x + 14, maxX)}px, ${e.point.y + 18}px)`;
         });
         map.on('mouseleave', GRID_FILL, () => {
           map.getCanvas().style.cursor = '';
           if (hoverId !== null) map.setFeatureState({ source: GRID_SRC, id: hoverId }, { hover: false });
           hoverId = null;
           useAppStore.getState().setHover(null);
+          tip.style.display = 'none';
         });
         map.on('click', GRID_FILL, (e) => {
           const f = e.features?.[0];

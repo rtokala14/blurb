@@ -7,7 +7,7 @@ import RightDock from './components/RightDock';
 import Legend from './components/Legend';
 import Toolbar from './components/Toolbar';
 import ErrorBanner from './components/ErrorBanner';
-import StatTiles from './components/StatTiles';
+import AddLayerModal from './components/AddLayerModal';
 import './App.css';
 
 const base = import.meta.env.BASE_URL;
@@ -29,6 +29,18 @@ export default function App() {
       .catch((e) => setErr(String(e)));
   }, [load]);
 
+  // Global Escape: close the add-layer modal first, otherwise deselect the cell.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      const st = useAppStore.getState();
+      if (st.ui.addLayerOpen) { st.setUi({ addLayerOpen: false }); return; }
+      if (st.selectedCell) st.selectCell(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   return (
     <div className={`app-root ${panelOpen ? '' : 'panel-closed'} ${dockOpen ? 'dock-open' : 'dock-closed'}`}>
       <MapView />
@@ -46,9 +58,9 @@ export default function App() {
           </div>
           <ErrorBanner />
           {panelOpen && <ControlPanel />}
-          <StatTiles />
           <RightDock />
           <Legend />
+          <AddLayerModal />
         </>
       )}
       {err && <div className="fatal">Failed to load data: {err}</div>}

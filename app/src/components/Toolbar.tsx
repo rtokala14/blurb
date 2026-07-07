@@ -21,6 +21,8 @@ export default function Toolbar() {
         className={`chip ${panelOpen ? 'on' : ''}`}
         onClick={() => setUi({ panelOpen: !panelOpen })}
         title="Toggle control panel"
+        aria-label="Toggle control panel"
+        aria-pressed={panelOpen}
       >
         ☰ Panel
       </button>

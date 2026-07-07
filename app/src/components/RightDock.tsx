@@ -11,7 +11,12 @@ export default function RightDock() {
 
   if (!open) {
     return (
-      <button className="dock-tab glass" onClick={() => setUi({ dockOpen: true })} title="Open analysis panel">
+      <button
+        className="dock-tab glass"
+        onClick={() => setUi({ dockOpen: true })}
+        title="Open analysis panel"
+        aria-label="Open analysis panel"
+      >
         ❮
       </button>
     );
@@ -23,7 +28,12 @@ export default function RightDock() {
         <div>
           <div className="overline">Layer profile</div>
         </div>
-        <button className="dock-collapse" onClick={() => setUi({ dockOpen: false })} title="Collapse panel">
+        <button
+          className="dock-collapse"
+          onClick={() => setUi({ dockOpen: false })}
+          title="Collapse panel"
+          aria-label="Collapse analysis panel"
+        >
           ❯
         </button>
       </div>
