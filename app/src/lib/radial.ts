@@ -90,3 +90,27 @@ export function buildSectors(
 }
 
 export const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
+
+// Ring of lon/lat points at radius r (meters) around a center, CCW.
+function circleRing(center: [number, number], r: number, steps = 72): [number, number][] {
+  const [lon, lat] = center;
+  const ring: [number, number][] = [];
+  for (let k = 0; k <= steps; k++) {
+    const a = (k / steps) * 2 * Math.PI;
+    ring.push(offset(lon, lat, Math.sin(a) * r, Math.cos(a) * r));
+  }
+  return ring;
+}
+
+// Dark "stage" annulus drawn under the radial columns so they stay visually
+// distinct from the heatmap. The hole keeps the selected cell itself bright.
+export function stagePolygon(center: [number, number], outerR = 1180, innerR = 600) {
+  return {
+    type: 'Feature' as const,
+    properties: {},
+    geometry: {
+      type: 'Polygon' as const,
+      coordinates: [circleRing(center, outerR), circleRing(center, innerR).reverse()],
+    },
+  };
+}

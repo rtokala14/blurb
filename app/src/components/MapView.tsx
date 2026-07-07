@@ -192,7 +192,15 @@ export default function MapView() {
     if (valid) {
       const domain = st.ui.relativeRamp ? scoreDomain(scores) : ([0, 1] as [number, number]);
       map.setPaintProperty(GRID_FILL, 'fill-color', rampExpression(st.ui.cvdSafeRamp, domain));
-      map.setPaintProperty(GRID_FILL, 'fill-opacity', 0.78);
+      // Focus mode while a cell is selected: fade the heatmap so the radial
+      // columns stand apart from the cell colors (selected cell stays bright).
+      map.setPaintProperty(
+        GRID_FILL,
+        'fill-opacity',
+        st.selectedCell
+          ? (['case', ['boolean', ['feature-state', 'selected'], false], 0.92, 0.18] as any)
+          : 0.78
+      );
     } else {
       // desaturate to gray + low opacity
       map.setPaintProperty(GRID_FILL, 'fill-color', [
@@ -232,6 +240,7 @@ export default function MapView() {
       map.setFeatureState({ source: GRID_SRC, id: idx }, { selected: true });
       prevSelIdx.current = idx;
     }
+    pushScores(); // re-applies fill opacity for the focus/normal state
     if (!selectedCell) {
       radialRef.current?.hide();
       chipRef.current?.remove();

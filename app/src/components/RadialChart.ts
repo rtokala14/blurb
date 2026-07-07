@@ -1,9 +1,12 @@
 import maplibregl, { type Map as MLMap, Marker } from 'maplibre-gl';
 import type { Contribution } from '../types';
-import { buildSectors, easeOutCubic, type SectorFeature } from '../lib/radial';
+import { buildSectors, stagePolygon, easeOutCubic, type SectorFeature } from '../lib/radial';
 
 const SRC = 'radial-src';
 const FILL = 'radial-fill';
+const STAGE_SRC = 'radial-stage-src';
+const STAGE = 'radial-stage';
+const STAGE_RING = 'radial-stage-ring';
 
 const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -33,6 +36,26 @@ export class RadialChart {
     if (!map.getSource(SRC)) {
       map.addSource(SRC, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
     }
+    if (!map.getSource(STAGE_SRC)) {
+      map.addSource(STAGE_SRC, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+    }
+    // Stage plate first so the extruded columns render above it.
+    if (!map.getLayer(STAGE)) {
+      map.addLayer({
+        id: STAGE,
+        type: 'fill',
+        source: STAGE_SRC,
+        paint: { 'fill-color': '#0a0a0a', 'fill-opacity': 0.55 },
+      });
+    }
+    if (!map.getLayer(STAGE_RING)) {
+      map.addLayer({
+        id: STAGE_RING,
+        type: 'line',
+        source: STAGE_SRC,
+        paint: { 'line-color': '#22d3ee', 'line-width': 1.4, 'line-opacity': 0.28, 'line-blur': 1 },
+      });
+    }
     if (!map.getLayer(FILL)) {
       map.addLayer({
         id: FILL,
@@ -55,6 +78,10 @@ export class RadialChart {
     this.features = buildSectors(center, contribs);
     this.targets = this.features.map((f) => f.properties.targetHeight);
     this.active = true;
+    (this.map.getSource(STAGE_SRC) as any)?.setData({
+      type: 'FeatureCollection',
+      features: [stagePolygon(center)],
+    });
     this.renderLabels();
 
     // animate from current heights (0 if new count)
@@ -148,6 +175,7 @@ export class RadialChart {
     this.features = [];
     this.current = [];
     (this.map.getSource(SRC) as any)?.setData({ type: 'FeatureCollection', features: [] });
+    (this.map.getSource(STAGE_SRC) as any)?.setData({ type: 'FeatureCollection', features: [] });
   }
 
   destroy() {
