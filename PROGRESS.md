@@ -39,66 +39,50 @@ Shipped so far (commit history is the authority; highlights):
   default weights (sum 100): roads 12, industrial 12, gidc 6, slope 10,
   doublecrop 10, settlements 10, railway 10, junctions 10, streams 5,
   jantri 5, npo 5, wfpr 5. 'balanced' preset matches.
+- `bebe55c`/`1db3b7d` — Agent 2: basemap switcher (dark/light Carto,
+  satellite/terrain Esri; all app layers re-added on `style.load` with state
+  restored) + light UI theme (`:root[data-theme='light']` token overrides,
+  `ui.theme`, "◐ Theme" chip; chart literals moved to tokens). Screenshots
+  09–11.
+- `46584c3` — percentage display: chip "46%", inspector "44.8% suitability",
+  tooltip "C361 · 47%", radar titles in %. Contribution POINTS stay points.
+- **GeoJSON upload + Dashboard view** (this commit):
+  - *Upload* (AddLayerModal "Upload GeoJSON" section): file input ≤10 MB,
+    ≤5000 features, Polygon/MultiPolygon FeatureCollection only, friendly
+    inline errors (never crashes). Numeric columns = ≥80% of non-null values
+    finite numbers; column select + "invert (lower is better)" + preview line
+    ("6 features · range 120.5 – 987.2"). Min–max normalize (degenerate →
+    0.5); spatial join in `app/src/lib/upload.ts` (pure functions):
+    centroid point-in-polygon (even-odd ray cast, holes + MultiPolygon OK),
+    fallback nearest feature centroid ≤2 km, else null. Creates catalog
+    entry `custom-<n>` (name from file ≤28 chars, first unused palette color
+    else cycled, 12-bin [0,1] histogram matching pipeline shape) via new
+    store action `addCustomLayer(def, cellScores)` — one set() updating
+    catalog/catalogById/scores/layers (+history, clears activePreset).
+    Join-quality note shown in the modal ("matched 474/500 grid cells"),
+    then it auto-closes. Custom layers verified end-to-end: slider, donut,
+    radar axis, radial sector, inspector bars, remove — all work.
+  - *Dashboard*: `ui.view: 'explorer'|'dashboard'`; Explorer|Dashboard tabs
+    (aria-pressed buttons) inside the restyled brand card (control panel
+    moved to top:124px to fit). Opaque overlay page at z-18 (panels 15 <
+    18 < brand 20 < banner 30 < modal 40); MapView untouched underneath;
+    toolbar hidden while in dashboard view. Six cards: ramp-colored score
+    histogram (x-axis %, counts in <title>), avg contribution by layer
+    (horizontal bars, Σ ≈ mean), top-10 table (row click → explorer +
+    selectCell → map flies there), grid radar (reused as-is), data coverage
+    (n/500 per layer), model summary (WeightDonut + mean/max % stats).
+    Σ≠100 → cards 1/2/3/6 gray out with "—" while ErrorBanner floats above
+    the overlay; Esc semantics unchanged (does NOT exit dashboard). Both
+    themes verified. Screenshots 12–14.
 
-## In flight (subagent currently working)
+## In flight
 
-**Agent 2 — light theme + basemap switcher** (uncommitted changes in
-`app/src/` belong to it; it commits when done):
-
-- Basemap ui state `'dark'|'light'|'satellite'|'terrain'` + segmented control
-  in Toolbar. Dark/light = Carto dark-matter / positron GL styles; satellite
-  = Esri World_Imagery raster; terrain = Esri World_Topo_Map raster; inline
-  dark fallback style retained. `map.setStyle()` wipes custom layers, so all
-  app layers/sources are re-added on `style.load` and state restored: scores
-  via pushScores(), selected feature-state, overlay visibility, radial chart
-  reattach (incl. stage + labels + chip) if a cell is selected. No intro
-  re-run on basemap change.
-- Light UI theme: `:root[data-theme='light']` token overrides in
-  `app/src/theme.css`; `ui.theme` in store; "◐ Theme" chip;
-  `document.documentElement.dataset.theme` set from App. Hard-coded dark
-  rgba() literals in radar/sector-label/score-chip/cell-tip/etc. moved to
-  tokens (`--chart-grid`, `--tip-bg`, `--backdrop`, `--raise-hover`, …).
-  Theme toggle auto-swaps basemap only between dark↔light Carto styles.
-- Verification: screenshots 09-light-mode, 10-satellite, 11-light-selected
-  plus dark-mode regression re-run.
+Nothing — no uncommitted agent work.
 
 ## Queued next (in order)
 
-1. **Percentage display** (small, do directly, not via agent — user request):
-   scores render as percentages, not "x / 100". Chip: "46%" + label; Cell
-   inspector: "44.8%" and drop "/ 100 suitability" (keep the word
-   suitability); hover tooltip: "C361 · 47%"; radar vertex title values may
-   take "%" too. Contribution POINTS stay points (sector pills, breakdown
-   bars, "Σ contributions" footer) — they are additive parts, not
-   percentages. Dashboard (below) must use % from the start.
-
-2. **Agent 3 — GeoJSON upload + Dashboard tab** (not started; full spec):
-   - *Upload*: in AddLayerModal add an "Upload GeoJSON" section: file input
-     (≤10 MB, ≤5000 features, FeatureCollection of Polygon/MultiPolygon;
-     friendly inline errors). Detect numeric property columns (≥80% numeric
-     non-null values); user picks column + optional "invert (lower is
-     better)" toggle; min–max normalize to 0–1; join to the 500-cell grid by
-     cell-centroid point-in-polygon (ray casting, MultiPolygon-aware) with
-     nearest-feature-centroid ≤2 km fallback, else null (renormalization
-     already handles nulls). Creates a catalog entry `custom-<n>` (name from
-     file, next unused categorical palette color, histogram bins computed
-     same shape as pipeline's for Sparkline) + store.scores entry + working
-     layer weight 0 enabled. Store needs an `addCustomLayer` action
-     (catalog/catalogById/scores/layers update in one set()).
-   - *Dashboard*: `ui.view: 'explorer'|'dashboard'`, segmented tab control
-     near the brand card. Dashboard = opaque overlay page (z between panels
-     and modal; keep MapView mounted underneath). Theme-aware via tokens.
-     Load the dataviz skill before building charts. Cards: suitability
-     distribution histogram (weighted scores, ramp-colored); average
-     contribution by layer (horizontal bars, layer colors, direct labels);
-     top-10 cells table (rank, cell id, score %, top driver — row click
-     switches to explorer AND selects that cell); grid-average radar (reuse
-     RadarChart); weight donut + active preset; data-coverage card (cells
-     with data per layer, e.g. Jantri 313/500). Error banner still visible;
-     when Σ≠100 the dashboard shows the frozen/invalid treatment like the
-     map does. All scores as percentages.
-
-3. After both: refresh all screenshots, update this file, push.
+1. Push the branch when pushes are unblocked (currently blocked in this
+   environment); screenshots 12–14 + refreshed 01–07 are committed.
 
 ## Conventions & key facts (do not violate)
 
@@ -138,5 +122,18 @@ rendering; don't "fix" that by disabling TLS or removing the fallback.
 
 ## Branch / remote
 
-Everything lives on `claude/land-usability-heatmap-poc-itj76i` (pushed after
-every reviewed step). No PR exists; do not open one unless asked.
+Everything lives on `claude/land-usability-heatmap-poc-itj76i`. No PR exists;
+do not open one unless asked.
+
+**Remote sync note (2026-07-07):** after a session restart broke this
+environment's git push path (local git proxy 401s; no credential source for
+direct/ingress pushes), the tip state was synced to the remote branch via the
+GitHub API as consolidated commits containing all text files changed since
+`6dcc418`. The richer local history (`bebe55c`, `1db3b7d`, `46584c3`,
+`62e1c59`, `b3e37b8` + the sync-note commit) and the updated screenshot PNGs
+exist only in the session container. If that container is still alive when
+pushes heal, run `git push --force-with-lease origin
+claude/land-usability-heatmap-poc-itj76i` from it to restore full history and
+screenshots; otherwise the API-synced tree on the remote is complete and
+correct for all code/docs (only `docs/screenshots/*.png` are stale —
+regenerate them with `scripts/screenshot.mjs`).
