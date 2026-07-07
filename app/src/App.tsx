@@ -49,8 +49,8 @@ export default function App() {
           <div className="brand glass">
             <div className="brand-mark" />
             <div>
-              <div className="brand-title">LAND USABILITY EXPLORER</div>
-              <div className="brand-sub">Vadodara Region · 500-cell analysis grid</div>
+              <div className="brand-title">VANTAGE</div>
+              <div className="brand-sub">Land Suitability · Vadodara Region · 500-cell grid</div>
             </div>
           </div>
           <div className="topbar">

@@ -30,7 +30,7 @@ export default function Legend() {
 
   return (
     <div className="legend glass">
-      <div className="overline">Usability score</div>
+      <div className="overline">Suitability score</div>
       <div className="legend-bar" style={{ background: gradient }} />
       <div className="legend-scale tnum">
         {ticks.map((t, i) => <span key={i}>{t}</span>)}

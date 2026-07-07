@@ -44,7 +44,7 @@ export default function RightDock() {
         ) : (
           <div className="dock-hint">
             Hover cells to compare their profile against the grid average.
-            Click a cell for its full usability breakdown.
+            Click a cell for its full suitability breakdown.
           </div>
         )}
       </div>

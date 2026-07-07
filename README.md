@@ -1,6 +1,6 @@
-# Land Usability Explorer — Vadodara PoC
+# Vantage — Land Suitability (Vadodara PoC)
 
-An interactive, dark "ops-console" web app that computes a **weighted land-usability
+An interactive, dark "ops-console" web app that computes a **weighted land-suitability
 score** over a 500-cell analysis grid (Vadodara region, Gujarat), renders it as a
 red→green heatmap, and — on clicking any cell — erupts a **360° radial 3D column
 chart** showing how each layer contributes to that cell's score. Layers are fully
@@ -42,10 +42,10 @@ under `data/` changes.
 ## Scoring model
 
 ```
-usability(cell) = Σ  (wᵢ / 100) · sᵢ(cell)     over enabled layers
+suitability(cell) = Σ  (wᵢ / 100) · sᵢ(cell)     over enabled layers
 ```
 
-- `sᵢ ∈ [0,1]` is each layer's precomputed suitability (higher = more usable).
+- `sᵢ ∈ [0,1]` is each layer's precomputed suitability (higher = more suitable).
 - Enabled weights **must sum to exactly 100**; any other total is an invalid
   configuration → the map desaturates to gray, the radial chart freezes, and a
   persistent error banner offers **Auto-balance** (proportional rescale, rounding fixed
@@ -61,7 +61,9 @@ usability(cell) = Σ  (wᵢ / 100) · sᵢ(cell)     over enabled layers
 | Village NPO / WFPR | 476 / 460 covered (rest re-normalized) |
 | Village Jantri | 313 covered — only 53 villages, genuinely spans part of the area |
 
-GIDC is included but disabled by default: every value in the extract is 0.
+The GIDC influence layer's source extract is all zero, so the pipeline substitutes
+deterministic synthetic demo scores (seeded per cell index); it is enabled by default
+with weight 6.
 
 ## Design & accessibility
 

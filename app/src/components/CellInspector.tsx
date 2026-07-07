@@ -20,7 +20,7 @@ export default function CellInspector() {
       <div className="ci-head">
         <div>
           <div className="overline">Cell {selected.toUpperCase()}</div>
-          <div className="ci-title">Usability breakdown</div>
+          <div className="ci-title">Suitability breakdown</div>
         </div>
         <button className="ci-close" onClick={() => selectCell(null)} title="Deselect">✕</button>
       </div>
@@ -28,7 +28,7 @@ export default function CellInspector() {
       <div className="ci-score">
         <div className={`ci-score-val tnum ${valid ? '' : 'muted'}`}>{valid ? fmtScore1(total / 100) : '—'}</div>
         <div className="ci-score-meta">
-          <div className="ci-score-unit">/ 100 usability</div>
+          <div className="ci-score-unit">/ 100 suitability</div>
           {partial && <div className="ci-partial">partial data · re-normalized</div>}
           {!valid && <div className="ci-partial bad">frozen · weights ≠ 100</div>}
         </div>

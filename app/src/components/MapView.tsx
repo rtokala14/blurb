@@ -313,7 +313,7 @@ export default function MapView() {
         .addTo(map);
     }
     const inner = chipRef.current.getElement().firstElementChild as HTMLElement;
-    inner.innerHTML = `<div class="chip-score tnum">${scoreVal}</div><div class="chip-label">usability</div>`;
+    inner.innerHTML = `<div class="chip-score tnum">${scoreVal}</div><div class="chip-label">suitability</div>`;
     chipRef.current.setLngLat(cell.centroid);
   }
 

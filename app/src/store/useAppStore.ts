@@ -11,7 +11,7 @@ export interface Preset {
 export const PRESETS: Preset[] = [
   {
     id: 'balanced', name: 'Balanced',
-    weights: { roads: 15, industrial: 15, slope: 10, doublecrop: 10, settlements: 10, railway: 10, junctions: 10, streams: 5, jantri: 5, npo: 5, wfpr: 5 },
+    weights: { roads: 12, industrial: 12, slope: 10, doublecrop: 10, settlements: 10, railway: 10, junctions: 10, streams: 5, gidc: 6, jantri: 5, npo: 5, wfpr: 5 },
   },
   {
     id: 'connectivity', name: 'Connectivity first',

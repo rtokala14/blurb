@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Land Usability Explorer — preprocessing pipeline.
+// Vantage (Land Suitability) — preprocessing pipeline.
 // Plain Node, no native/GIS deps. Builds a canonical 500-cell grid from
 // Slope.geojson, joins every other analysis layer by NEAREST CELL CENTROID
 // (FeatureID is NOT consistent across layers), joins village layers by
@@ -140,8 +140,8 @@ const r4 = (v) => Math.round(v * 1e4) / 1e4;
 const PALETTE = ['#3987e5', '#199e70', '#c98500', '#008300', '#9085e9', '#e66767', '#d55181', '#d95926'];
 
 const GRID_LAYERS = [
-  { id: 'roads', name: 'Road connectivity', file: 'Analysis/Road Buffer.geojson', field: 'nor_roads', weight: 15, icon: 'road', desc: 'Proximity to national/state/major roads (NE/NH/SH/MR buffers).' },
-  { id: 'industrial', name: 'Industrial proximity', file: 'Analysis/Industrial_Area.geojson', field: 'oneminus', weight: 15, icon: 'factory', desc: 'Closeness to existing GIDC industrial estates — nearer is better.' },
+  { id: 'roads', name: 'Road connectivity', file: 'Analysis/Road Buffer.geojson', field: 'nor_roads', weight: 12, icon: 'road', desc: 'Proximity to national/state/major roads (NE/NH/SH/MR buffers).' },
+  { id: 'industrial', name: 'Industrial proximity', file: 'Analysis/Industrial_Area.geojson', field: 'oneminus', weight: 12, icon: 'factory', desc: 'Closeness to existing GIDC industrial estates — nearer is better.' },
   { id: 'slope', name: 'Slope', file: 'Analysis/Slope.geojson', field: 'oneminus', weight: 10, icon: 'terrain', desc: 'Terrain flatness — flatter land is cheaper to develop.' },
   { id: 'doublecrop', name: 'Double-crop land', file: 'Analysis/DoubleCropLand.geojson', field: 'oneminus', weight: 10, icon: 'crop', desc: 'Avoids fertile double-cropped farmland.' },
   { id: 'settlements', name: 'Settlements', file: 'Analysis/Settlements.geojson', field: 'oneminus', weight: 10, icon: 'home', desc: 'Avoids built-up village settlement (gamtal) area.' },
@@ -154,7 +154,7 @@ const VILLAGE_LAYERS = [
   { id: 'npo', name: 'Non-primary occupation', file: 'Analysis/Village_NPO.json', field: 'NPO_nor', weight: 5, icon: 'people', desc: 'Share of non-farming workforce — industrial readiness.' },
   { id: 'wfpr', name: 'Workforce participation', file: 'Analysis/Village_WFPR.json', field: 'wfpr_nor1', weight: 5, icon: 'workforce', desc: 'Workforce participation rate of the village.' },
 ];
-const GIDC_LAYER = { id: 'gidc', name: 'GIDC influence', file: 'Analysis/GIDC_Influence.geojson', field: 'nor_score', weight: 0, icon: 'grid', desc: 'GIDC estate coverage. No data in this extract (all zero).', allZero: true };
+const GIDC_LAYER = { id: 'gidc', name: 'GIDC influence', file: 'Analysis/GIDC_Influence.geojson', field: 'nor_score', weight: 6, icon: 'grid', desc: 'GIDC estate influence. Source extract is all zero, so values are synthetic demo scores (deterministic, seeded per cell).' };
 
 // ---------- build canonical grid from Slope ----------
 console.log('Building canonical grid from Slope.geojson …');
@@ -251,7 +251,28 @@ function joinVillageLayer(layer) {
 }
 
 for (const l of GRID_LAYERS) joinGridLayer(l);
-joinGridLayer(GIDC_LAYER);
+
+// ---------- GIDC: synthetic demo scores ----------
+// The GIDC_Influence extract is all zero, so instead of joining it we generate
+// DETERMINISTIC pseudo-random scores in [0.05, 0.95], seeded from the cell
+// index (mulberry32) — identical output on every run.
+function mulberry32(seed) {
+  return function () {
+    let t = (seed += 0x6d2b79f5);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+{
+  const map = {};
+  cells.forEach((cell, i) => {
+    map[cell.id] = r4(0.05 + mulberry32(i + 1)() * 0.9);
+  });
+  scores[GIDC_LAYER.id] = map;
+  report.push({ id: GIDC_LAYER.id, name: GIDC_LAYER.name, kind: 'grid', matched: Object.keys(map).length, rejected: 0, nullVals: 0, maxDrift: 0, field: 'synthetic' });
+}
+
 for (const l of VILLAGE_LAYERS) joinVillageLayer(l);
 
 // ---------- score distribution histograms (for sparklines) ----------
@@ -268,8 +289,7 @@ function histogram(layerId) {
 }
 
 // ---------- catalog ----------
-const orderedDefs = [...GRID_LAYERS, ...VILLAGE_LAYERS]; // 11 default
-// insert GIDC at its catalog position (after streams? PLAN lists it last). Keep last.
+// GIDC stays last in catalog order; all 12 layers are enabled by default.
 const catalogDefs = [...GRID_LAYERS, ...VILLAGE_LAYERS, GIDC_LAYER];
 const catalog = catalogDefs.map((l, i) => ({
   id: l.id,

@@ -17,7 +17,7 @@ export default function ErrorBanner() {
 
   const msg =
     enabledCount === 0
-      ? 'No layers enabled — enable at least one to compute usability.'
+      ? 'No layers enabled — enable at least one to compute suitability.'
       : `Weights total ${fmtWeight(total)} — must equal 100. ${
           delta > 0 ? `Add ${fmtWeight(delta)} points` : `Remove ${fmtWeight(-delta)} points`
         } or auto-balance.`;
