@@ -89,12 +89,12 @@ export default function RadarChart() {
         {/* rings */}
         {[0.25, 0.5, 0.75, 1].map((t) => (
           <polygon key={t} points={poly(enabled.map(() => t))}
-            fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth={1} />
+            fill="none" stroke="var(--chart-grid)" strokeWidth={1} />
         ))}
         {/* axes */}
         {enabled.map((_, i) => {
           const [x, y] = pt(i, 1);
-          return <line key={i} x1={CX} y1={CY} x2={x} y2={y} stroke="rgba(255,255,255,0.07)" strokeWidth={1} />;
+          return <line key={i} x1={CX} y1={CY} x2={x} y2={y} stroke="var(--chart-grid)" strokeWidth={1} />;
         })}
         {/* ring value labels along the top axis */}
         {[0.5, 1].map((t) => (
@@ -104,11 +104,11 @@ export default function RadarChart() {
         ))}
         {/* grid-average polygon */}
         <polygon points={poly(avgVals)}
-          fill="rgba(255,255,255,0.09)" stroke="rgba(255,255,255,0.45)" strokeWidth={1.2} />
+          fill="var(--chart-avg-fill)" stroke="var(--chart-avg-stroke)" strokeWidth={1.2} />
         {/* active cell polygon */}
         {activeVals && (
           <polygon points={poly(activeVals)}
-            fill="rgba(34,211,238,0.16)" stroke="#22d3ee" strokeWidth={2} strokeLinejoin="round" />
+            fill="var(--chart-cell-fill)" stroke="var(--accent)" strokeWidth={2} strokeLinejoin="round" />
         )}
         {/* vertex dots, layer-colored */}
         {activeVals && activeVals.map((v, i) => {
@@ -119,7 +119,7 @@ export default function RadarChart() {
               fill={def?.color ?? '#fff'}
               opacity={activeHasData![i] ? 1 : 0.3}
               stroke="rgba(0,0,0,0.5)" strokeWidth={1}>
-              <title>{`${def?.name}: ${activeHasData![i] ? Math.round(v * 100) : 'no data'}`}</title>
+              <title>{`${def?.name}: ${activeHasData![i] ? Math.round(v * 100) + '%' : 'no data'}`}</title>
             </circle>
           );
         })}

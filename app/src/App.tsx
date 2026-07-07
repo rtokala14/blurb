@@ -8,6 +8,7 @@ import Legend from './components/Legend';
 import Toolbar from './components/Toolbar';
 import ErrorBanner from './components/ErrorBanner';
 import AddLayerModal from './components/AddLayerModal';
+import Dashboard from './components/Dashboard';
 import './App.css';
 
 const base = import.meta.env.BASE_URL;
@@ -17,7 +18,16 @@ export default function App() {
   const loaded = useAppStore((s) => s.loaded);
   const panelOpen = useAppStore((s) => s.ui.panelOpen);
   const dockOpen = useAppStore((s) => s.ui.dockOpen);
+  const theme = useAppStore((s) => s.ui.theme);
+  const view = useAppStore((s) => s.ui.view);
+  const setUi = useAppStore((s) => s.setUi);
   const [err, setErr] = useState<string | null>(null);
+
+  // Theme is applied at the document root so every token override in
+  // theme.css (and light-mode CSS overrides) cascades from one place.
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+  }, [theme]);
 
   useEffect(() => {
     Promise.all([
@@ -47,19 +57,40 @@ export default function App() {
       {loaded && (
         <>
           <div className="brand glass">
-            <div className="brand-mark" />
-            <div>
-              <div className="brand-title">VANTAGE</div>
-              <div className="brand-sub">Land Suitability · Vadodara Region · 500-cell grid</div>
+            <div className="brand-row">
+              <div className="brand-mark" />
+              <div>
+                <div className="brand-title">VANTAGE</div>
+                <div className="brand-sub">Land Suitability · Vadodara Region · 500-cell grid</div>
+              </div>
+            </div>
+            <div className="view-tabs" role="group" aria-label="View">
+              <button
+                aria-pressed={view === 'explorer'}
+                className={view === 'explorer' ? 'on' : ''}
+                onClick={() => setUi({ view: 'explorer' })}
+              >
+                Explorer
+              </button>
+              <button
+                aria-pressed={view === 'dashboard'}
+                className={view === 'dashboard' ? 'on' : ''}
+                onClick={() => setUi({ view: 'dashboard' })}
+              >
+                Dashboard
+              </button>
             </div>
           </div>
-          <div className="topbar">
-            <Toolbar />
-          </div>
-          <ErrorBanner />
+          {view === 'explorer' && (
+            <div className="topbar">
+              <Toolbar />
+            </div>
+          )}
           {panelOpen && <ControlPanel />}
           <RightDock />
           <Legend />
+          <Dashboard />
+          <ErrorBanner />
           <AddLayerModal />
         </>
       )}

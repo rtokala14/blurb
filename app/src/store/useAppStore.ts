@@ -27,6 +27,10 @@ export const PRESETS: Preset[] = [
   },
 ];
 
+export type Basemap = 'dark' | 'light' | 'satellite' | 'terrain';
+export type Theme = 'dark' | 'light';
+export type View = 'explorer' | 'dashboard';
+
 interface AppState {
   loaded: boolean;
   grid: GridData | null;
@@ -44,7 +48,7 @@ interface AppState {
   hoverCell: string | null;
 
   overlays: Record<string, boolean>;
-  ui: { basemapLabels: boolean; cvdSafeRamp: boolean; panelOpen: boolean; relativeRamp: boolean; dockOpen: boolean; addLayerOpen: boolean };
+  ui: { basemapLabels: boolean; cvdSafeRamp: boolean; panelOpen: boolean; relativeRamp: boolean; dockOpen: boolean; addLayerOpen: boolean; basemap: Basemap; theme: Theme; view: View };
 
   history: WorkingLayer[][]; // for undo
 
@@ -55,6 +59,7 @@ interface AppState {
   toggleEnabled: (id: string) => void;
   removeLayer: (id: string) => void;
   addLayer: (id: string) => void;
+  addCustomLayer: (def: LayerDef, cellScores: Record<string, number>) => void;
   autoBalance: () => void;
   undo: () => void;
   applyPreset: (id: string) => void;
@@ -63,6 +68,8 @@ interface AppState {
   setHover: (id: string | null) => void;
   toggleOverlay: (id: string) => void;
   setUi: (patch: Partial<AppState['ui']>) => void;
+  setBasemap: (b: Basemap) => void;
+  setTheme: (t: Theme) => void;
 }
 
 const pushHistory = (s: AppState): WorkingLayer[][] =>
@@ -80,7 +87,7 @@ export const useAppStore = create<AppState>((set) => ({
   selectedCell: null,
   hoverCell: null,
   overlays: { expressway: false, railway: false, statehighway: false, river: false },
-  ui: { basemapLabels: false, cvdSafeRamp: false, panelOpen: true, relativeRamp: true, dockOpen: true, addLayerOpen: false },
+  ui: { basemapLabels: false, cvdSafeRamp: false, panelOpen: true, relativeRamp: true, dockOpen: true, addLayerOpen: false, basemap: 'dark', theme: 'dark', view: 'explorer' },
   history: [],
   activePreset: 'balanced',
 
@@ -133,6 +140,22 @@ export const useAppStore = create<AppState>((set) => ({
       };
     }),
 
+  // Register an uploaded layer: catalog entry, its per-cell scores and a
+  // working layer (weight 0, enabled) land in ONE set() so every consumer
+  // (sliders, radar, radial, donut) sees a consistent snapshot.
+  addCustomLayer: (def, cellScores) =>
+    set((s) => {
+      if (s.catalogById[def.id]) return {};
+      return {
+        history: pushHistory(s),
+        activePreset: null,
+        catalog: [...s.catalog, def],
+        catalogById: { ...s.catalogById, [def.id]: def },
+        scores: { ...s.scores, [def.id]: cellScores },
+        layers: [...s.layers, { id: def.id, weight: 0, enabled: true }],
+      };
+    }),
+
   autoBalance: () =>
     set((s) => ({ history: pushHistory(s), activePreset: null, layers: autoBalanceFn(s.layers) })),
 
@@ -172,4 +195,15 @@ export const useAppStore = create<AppState>((set) => ({
   setHover: (id) => set({ hoverCell: id }),
   toggleOverlay: (id) => set((s) => ({ overlays: { ...s.overlays, [id]: !s.overlays[id] } })),
   setUi: (patch) => set((s) => ({ ui: { ...s.ui, ...patch } })),
+
+  // Picking a basemap manually never changes the UI theme.
+  setBasemap: (b) => set((s) => ({ ui: { ...s.ui, basemap: b } })),
+
+  // Toggling the theme drags the basemap along only when the current basemap
+  // is one of the dark/light pair; satellite & terrain are left alone.
+  setTheme: (t) =>
+    set((s) => {
+      const followBasemap = s.ui.basemap === 'dark' || s.ui.basemap === 'light';
+      return { ui: { ...s.ui, theme: t, basemap: followBasemap ? t : s.ui.basemap } };
+    }),
 }));
