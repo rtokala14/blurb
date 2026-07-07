@@ -29,7 +29,7 @@ export default function WeightDonut() {
   return (
     <div className="donut-wrap">
       <svg width="128" height="128" viewBox="0 0 128 128">
-        <circle cx="64" cy="64" r={R} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={STROKE} />
+        <circle cx="64" cy="64" r={R} fill="none" stroke="var(--wheel-track)" strokeWidth={STROKE} />
         {/* deficit arc (pulsing red) when under 100 */}
         {remainingFrac > 0 && (
           <circle

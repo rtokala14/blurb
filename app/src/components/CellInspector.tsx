@@ -26,9 +26,9 @@ export default function CellInspector() {
       </div>
 
       <div className="ci-score">
-        <div className={`ci-score-val tnum ${valid ? '' : 'muted'}`}>{valid ? fmtScore1(total / 100) : '—'}</div>
+        <div className={`ci-score-val tnum ${valid ? '' : 'muted'}`}>{valid ? `${fmtScore1(total / 100)}%` : '—'}</div>
         <div className="ci-score-meta">
-          <div className="ci-score-unit">/ 100 suitability</div>
+          <div className="ci-score-unit">suitability</div>
           {partial && <div className="ci-partial">partial data · re-normalized</div>}
           {!valid && <div className="ci-partial bad">frozen · weights ≠ 100</div>}
         </div>
@@ -57,7 +57,7 @@ export default function CellInspector() {
       </div>
 
       <div className="ci-foot tnum">
-        Σ contributions = <b>{valid ? total.toFixed(1) : '—'}</b>{valid ? ' = cell score' : ''}
+        Σ contributions = <b>{valid ? `${total.toFixed(1)}%` : '—'}</b>{valid ? ' = cell score' : ''}
       </div>
     </div>
   );

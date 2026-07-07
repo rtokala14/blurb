@@ -25,6 +25,7 @@ export class RadialChart {
   private fromHeights: number[] = [];
   private active = false;
   private markers: Marker[] = [];
+  private stageCenter: [number, number] | null = null;
 
   constructor(map: MLMap) {
     this.map = map;
@@ -72,9 +73,23 @@ export class RadialChart {
     }
   }
 
+  // Re-adds sources/layers and re-renders the current features after a
+  // basemap swap (map.setStyle wipes all custom sources & layers). The HTML
+  // label markers survive a style swap, so only GL state is restored here.
+  reattach() {
+    this.ensureLayers();
+    if (!this.active || !this.stageCenter) return;
+    (this.map.getSource(STAGE_SRC) as any)?.setData({
+      type: 'FeatureCollection',
+      features: [stagePolygon(this.stageCenter)],
+    });
+    this.render();
+  }
+
   // Erupt (or re-animate) the chart for a set of contributions at a centroid.
   show(center: [number, number], contribs: Contribution[]) {
     this.ensureLayers();
+    this.stageCenter = center;
     this.features = buildSectors(center, contribs);
     this.targets = this.features.map((f) => f.properties.targetHeight);
     this.active = true;
@@ -174,6 +189,7 @@ export class RadialChart {
   private clear() {
     this.features = [];
     this.current = [];
+    this.stageCenter = null;
     (this.map.getSource(SRC) as any)?.setData({ type: 'FeatureCollection', features: [] });
     (this.map.getSource(STAGE_SRC) as any)?.setData({ type: 'FeatureCollection', features: [] });
   }
