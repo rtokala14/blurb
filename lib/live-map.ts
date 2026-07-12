@@ -122,6 +122,7 @@ export function mapLiveSession(session: LiveSession): ChatSession {
     activeBranchId: session.activeBranchId,
     runStatus: session.currentRun.status,
     chatFolderId: session.chatFolderId,
+    mode: session.mode,
   }
 }
 

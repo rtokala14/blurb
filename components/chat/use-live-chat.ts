@@ -181,6 +181,8 @@ export function useLiveChat(sessionId: string) {
             userInput: text,
             branchId: session.activeBranchId ?? undefined,
             sessionTraceId,
+            // "thinking" routes the turn to the deep-research agent
+            mode: session.mode === "thinking" ? "thinking" : undefined,
           },
           {
             onChunk: (accumulated) => {

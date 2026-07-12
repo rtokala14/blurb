@@ -2,12 +2,12 @@ import { NextResponse } from "next/server"
 
 import { runSessionTurn } from "@/lib/foundry/chat"
 import {
-  foundryUserEmail,
   getSessionRow,
   sanitizeAttachments,
   updateSessionRow,
 } from "@/lib/foundry/ontology"
 import { errorResponse, json, requireLive } from "@/lib/foundry/http"
+import { resolveRequestUser } from "@/lib/foundry/user"
 
 export const dynamic = "force-dynamic"
 export const maxDuration = 300
@@ -25,7 +25,7 @@ export async function POST(
   if (guard) return guard
   try {
     const { id } = await params
-    const userEmail = foundryUserEmail()
+    const userEmail = await resolveRequestUser(request)
     let session = await getSessionRow(id, userEmail)
     if (!session) return json({ error: "Session not found" }, { status: 404 })
 

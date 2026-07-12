@@ -1,11 +1,11 @@
 import {
-  foundryUserEmail,
   getChatFolder,
   getSessionRow,
   normalizeEmail,
   updateSessionRow,
 } from "@/lib/foundry/ontology"
 import { errorResponse, json, requireLive } from "@/lib/foundry/http"
+import { resolveRequestUser } from "@/lib/foundry/user"
 
 export const dynamic = "force-dynamic"
 
@@ -21,7 +21,7 @@ export async function PUT(
   if (guard) return guard
   try {
     const { id } = await params
-    const userEmail = foundryUserEmail()
+    const userEmail = await resolveRequestUser(request)
     const session = await getSessionRow(id, userEmail)
     if (!session) return json({ error: "Session not found" }, { status: 404 })
 

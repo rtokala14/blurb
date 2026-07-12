@@ -1,25 +1,25 @@
 import { getMediaContent } from "@/lib/foundry/client"
 import {
   extractMediaItemRid,
-  foundryUserEmail,
   getAccessibleFolders,
   getDoc,
   normalizeEmail,
 } from "@/lib/foundry/ontology"
 import { errorResponse, json, requireLive } from "@/lib/foundry/http"
+import { resolveRequestUser } from "@/lib/foundry/user"
 
 export const dynamic = "force-dynamic"
 
 /** Stream a document's PDF (owner or shared-via-folder access, like the PoC). */
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ pk: string }> }
 ) {
   const guard = requireLive()
   if (guard) return guard
   try {
     const { pk } = await params
-    const userEmail = foundryUserEmail()
+    const userEmail = await resolveRequestUser(request)
     const doc = await getDoc(pk)
     if (!doc || doc.isActive === false) {
       return json({ error: "Document not found" }, { status: 404 })

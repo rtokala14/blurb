@@ -1,6 +1,5 @@
 import { getObject } from "@/lib/foundry/client"
 import {
-  foundryUserEmail,
   getChatFolder,
   listSessionsInChatFolder,
   normalizeEmail,
@@ -12,15 +11,16 @@ import {
   type ChatFolderRow,
 } from "@/lib/foundry/ontology"
 import { errorResponse, json, requireLive } from "@/lib/foundry/http"
+import { resolveRequestUser } from "@/lib/foundry/user"
 
 export const dynamic = "force-dynamic"
 
-async function getOwnedChatFolder(id: string) {
+async function getOwnedChatFolder(id: string, userEmail: string) {
   const folder = await getChatFolder(id)
   if (!folder) {
     return { error: json({ error: "Chat folder not found" }, { status: 404 }) }
   }
-  if (normalizeEmail(folder.createdBy) !== normalizeEmail(foundryUserEmail())) {
+  if (normalizeEmail(folder.createdBy) !== normalizeEmail(userEmail)) {
     return {
       error: json(
         { error: "Only the folder creator can modify it" },
@@ -40,7 +40,7 @@ export async function PUT(
   if (guard) return guard
   try {
     const { id } = await params
-    const owned = await getOwnedChatFolder(id)
+    const owned = await getOwnedChatFolder(id, await resolveRequestUser(request))
     if (owned.error) return owned.error
     const body = (await request.json()) as { name?: string; color?: string | null }
     await updateChatFolder(owned.folder, {
@@ -66,7 +66,7 @@ export async function DELETE(
   if (guard) return guard
   try {
     const { id } = await params
-    const owned = await getOwnedChatFolder(id)
+    const owned = await getOwnedChatFolder(id, await resolveRequestUser(request))
     if (owned.error) return owned.error
     const body = (await request.json().catch(() => ({}))) as {
       deleteSessions?: boolean

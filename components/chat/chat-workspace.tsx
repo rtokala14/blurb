@@ -21,6 +21,7 @@ import { isEditableTarget } from "@/components/keyboard-shortcuts"
 import { Message } from "@/components/chat/message"
 import { TurnsNavigator } from "@/components/chat/turns-navigator"
 import { useChat } from "@/components/chat/use-chat"
+import { useRunRecovery } from "@/components/chat/use-run-recovery"
 import { StudioPanel } from "@/components/studio/studio-panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -97,6 +98,11 @@ export function ChatWorkspace() {
 
   /* live sessions: lazily fetch the transcript when opened */
   const loadContent = sim.loadContent
+  const recovering = useRunRecovery(
+    session?.live ? session.id : null,
+    sim.isBusy,
+    loadContent
+  )
   React.useEffect(() => {
     if (
       session?.live &&
@@ -414,6 +420,12 @@ export function ChatWorkspace() {
               )}
             </div>
 
+            {recovering && (
+              <div className="bg-muted/60 text-muted-foreground mx-auto mb-2 flex w-fit items-center gap-2 rounded-full border px-3 py-1 text-xs">
+                <span className="bg-primary size-1.5 animate-pulse rounded-full" />
+                Finishing the previous response — it will appear here shortly
+              </div>
+            )}
             <Composer
               session={session}
               isBusy={sim.isBusy}

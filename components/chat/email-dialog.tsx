@@ -28,6 +28,7 @@ import {
   ToggleGroup,
   ToggleGroupItem,
 } from "@/components/ui/toggle-group"
+import { liveApi } from "@/lib/live-api"
 import { cn } from "@/lib/utils"
 import { useOrbit } from "@/lib/store"
 import type { ChatMessage, ChatSession } from "@/lib/types"
@@ -116,9 +117,35 @@ export function EmailDialog({
     return () => pending.forEach((t) => clearTimeout(t as ReturnType<typeof setTimeout>))
   }, [])
 
-  /** Re-draft with current tone/length, streamed into the textarea. */
-  const refine = () => {
+  /**
+   * Re-draft with current tone/length. Live mode routes through the real
+   * Foundry refining agent; demo mode keeps the local template with a
+   * simulated stream.
+   */
+  const refine = async () => {
     setRefining(true)
+    if (useOrbit.getState().live === true) {
+      try {
+        const { text } = await liveApi.refine({
+          userInput: message.content,
+          toRefine: body || draftEmail(message, session, tone, length, citedDocNames),
+          refineRequest:
+            `Rewrite this as a ${tone} business email that is ` +
+            (length === "brief"
+              ? "brief — two short paragraphs at most."
+              : "appropriately detailed.") +
+            " Keep any citation markers like [1] intact and end with a professional sign-off. Return only the email body.",
+        })
+        if (text?.trim()) setBody(text.trim())
+      } catch (error) {
+        toast.error("Couldn't refine the draft", {
+          description: error instanceof Error ? error.message : undefined,
+        })
+      } finally {
+        setRefining(false)
+      }
+      return
+    }
     const target = draftEmail(message, session, tone, length, citedDocNames)
     setBody("")
     const tokens = target.match(/\S+\s*/g) ?? []

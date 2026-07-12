@@ -22,6 +22,9 @@ import { toast } from "sonner"
 import { DocIcon, docTypeLabel } from "@/components/doc-icon"
 import { DocPreviewSheet } from "@/components/documents/doc-preview-sheet"
 import { adoptSearchResult, useLiveDocSearch } from "@/hooks/use-live-doc-search"
+import { loadMoreLiveDocs } from "@/components/live-provider"
+import { liveApi } from "@/lib/live-api"
+import { Checkbox } from "@/components/ui/checkbox"
 import { FolderTree } from "@/components/documents/folder-tree"
 import { UploadDialog } from "@/components/documents/upload-dialog"
 import { Badge } from "@/components/ui/badge"
@@ -128,6 +131,60 @@ export function DocumentsView() {
   const [newFolderOpen, setNewFolderOpen] = React.useState(false)
   const [newFolderName, setNewFolderName] = React.useState("")
   const [treeSheetOpen, setTreeSheetOpen] = React.useState(false)
+  const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set())
+  const [docWindow, setDocWindow] = React.useState(200)
+  const [loadingMore, setLoadingMore] = React.useState(false)
+  const live = useOrbit((s) => s.live === true)
+
+  const toggleSelected = (id: string) =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+
+  const bulkDelete = () => {
+    const ids = [...selectedIds]
+    ids.forEach((id) => removeDoc(id))
+    setSelectedIds(new Set())
+    toast(`Deleted ${ids.length} ${ids.length === 1 ? "document" : "documents"}`)
+  }
+
+  const bulkAddToFolder = async (folderId: string) => {
+    const ids = [...selectedIds]
+    try {
+      // merge into the folder's current contents (fetched fresh — the store
+      // doesn't hold contents arrays)
+      const { data } = await liveApi.folders()
+      const target = data.find((f) => f.primaryKey === folderId)
+      if (!target) throw new Error("Folder not found")
+      const merged = [...new Set([...target.contents, ...ids])]
+      await liveApi.updateFolder(folderId, { contents: merged })
+      ids.forEach((id) => updateDoc(id, { folderId }))
+      setSelectedIds(new Set())
+      toast(`Added ${ids.length} ${ids.length === 1 ? "document" : "documents"} to the folder`)
+    } catch (error) {
+      toast.error("Couldn't add to the folder", {
+        description: error instanceof Error ? error.message : undefined,
+      })
+    }
+  }
+
+  const loadMore = async () => {
+    setLoadingMore(true)
+    try {
+      const next = docWindow + 300
+      await loadMoreLiveDocs(next)
+      setDocWindow(next)
+    } catch (error) {
+      toast.error("Couldn't load more documents", {
+        description: error instanceof Error ? error.message : undefined,
+      })
+    } finally {
+      setLoadingMore(false)
+    }
+  }
 
   /* deep links: /documents?upload=1 and /documents?doc=<id> */
   React.useEffect(() => {
@@ -408,6 +465,48 @@ export function DocumentsView() {
         )}
 
         {/* Content */}
+        {live && selectedIds.size > 0 && (
+          <div className="bg-muted/60 flex items-center gap-2 border-b px-4 py-2 text-sm">
+            <span className="font-medium tabular-nums">
+              {selectedIds.size} selected
+            </span>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="h-7">
+                  Add to folder
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start">
+                {folders
+                  .filter((f) => f.source !== "sharepoint")
+                  .map((f) => (
+                    <DropdownMenuItem
+                      key={f.id}
+                      onClick={() => void bulkAddToFolder(f.id)}
+                    >
+                      {f.name}
+                    </DropdownMenuItem>
+                  ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-destructive h-7"
+              onClick={bulkDelete}
+            >
+              Delete
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground ml-auto h-7"
+              onClick={() => setSelectedIds(new Set())}
+            >
+              Clear selection
+            </Button>
+          </div>
+        )}
         <div className="min-h-0 flex-1 overflow-y-auto">
           {visible.length === 0 ? (
             <Empty className="h-full">
@@ -434,6 +533,26 @@ export function DocumentsView() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  {live && (
+                    <TableHead className="w-8">
+                      <Checkbox
+                        aria-label="Select all visible"
+                        checked={
+                          visible.length > 0 &&
+                          visible.every((d) => selectedIds.has(d.id))
+                            ? true
+                            : selectedIds.size > 0
+                              ? "indeterminate"
+                              : false
+                        }
+                        onCheckedChange={(v) =>
+                          setSelectedIds(
+                            v === true ? new Set(visible.map((d) => d.id)) : new Set()
+                          )
+                        }
+                      />
+                    </TableHead>
+                  )}
                   <TableHead>Name</TableHead>
                   <TableHead className="w-36">Status</TableHead>
                   <TableHead className="hidden w-36 lg:table-cell">Owner</TableHead>
@@ -449,6 +568,15 @@ export function DocumentsView() {
                         className="cursor-pointer"
                         onClick={() => setPreviewDocId(doc.id)}
                       >
+                        {live && (
+                          <TableCell onClick={(e) => e.stopPropagation()}>
+                            <Checkbox
+                              aria-label={`Select ${doc.name}`}
+                              checked={selectedIds.has(doc.id)}
+                              onCheckedChange={() => toggleSelected(doc.id)}
+                            />
+                          </TableCell>
+                        )}
                         <TableCell>
                           <div className="flex items-center gap-2.5">
                             <DocIcon type={doc.type} />
@@ -511,6 +639,13 @@ export function DocumentsView() {
                   {rowMenu(doc)}
                 </ContextMenu>
               ))}
+            </div>
+          )}
+          {live && !query && !currentFolderId && visible.length >= docWindow && (
+            <div className="flex justify-center p-4">
+              <Button variant="outline" size="sm" disabled={loadingMore} onClick={loadMore}>
+                {loadingMore ? "Loading…" : "Load more documents"}
+              </Button>
             </div>
           )}
         </div>

@@ -3,6 +3,7 @@
 import * as React from "react"
 import {
   ArrowUp,
+  Brain,
   FilePlus2,
   FileSpreadsheet,
   FileText,
@@ -197,6 +198,36 @@ export function Composer({
               </TooltipTrigger>
               <TooltipContent>Create a doc, sheet, or deck</TooltipContent>
             </Tooltip>
+            {live && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant={session.mode === "thinking" ? "secondary" : "ghost"}
+                    size="sm"
+                    aria-label="Toggle thinking mode"
+                    aria-pressed={session.mode === "thinking"}
+                    className={
+                      session.mode === "thinking"
+                        ? "text-primary h-7 gap-1 px-2 text-xs font-medium"
+                        : "text-muted-foreground h-7 gap-1 px-2 text-xs"
+                    }
+                    onClick={() =>
+                      useOrbit.getState().patchSession(session.id, {
+                        mode: session.mode === "thinking" ? "regular" : "thinking",
+                      })
+                    }
+                  >
+                    <Brain className="size-3.5" />
+                    Think longer
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {session.mode === "thinking"
+                    ? "Deep-research agent is on — slower, more thorough answers"
+                    : "Route this chat to the deep-research agent"}
+                </TooltipContent>
+              </Tooltip>
+            )}
             <span className="text-muted-foreground ml-auto mr-2 text-[11px] max-sm:hidden">
               <Kbd>↵</Kbd> send · <Kbd>⇧↵</Kbd> newline
             </span>

@@ -3,12 +3,12 @@ import { PDFDocument } from "pdf-lib"
 import { uploadMedia } from "@/lib/foundry/client"
 import {
   createDocRow,
-  foundryUserEmail,
   normalizeEmail,
   type DocRow,
 } from "@/lib/foundry/ontology"
 import { searchObjects } from "@/lib/foundry/client"
 import { errorResponse, json, requireLive } from "@/lib/foundry/http"
+import { resolveRequestUser } from "@/lib/foundry/user"
 
 export const dynamic = "force-dynamic"
 export const maxDuration = 120
@@ -27,7 +27,7 @@ export async function POST(request: Request) {
   const guard = requireLive()
   if (guard) return guard
   try {
-    const userEmail = foundryUserEmail()
+    const userEmail = await resolveRequestUser(request)
     const form = await request.formData()
     const files = form.getAll("files").filter((f): f is File => f instanceof File)
     const names = form.getAll("names").map(String)
@@ -48,13 +48,17 @@ export async function POST(request: Request) {
       }
     }
 
-    // Duplicate-name check against the user's active documents.
+    // Duplicate-name check via an exact `in` filter on the requested names —
+    // a full owned-docs scan silently truncates at tenant scale (~19k rows)
+    // and misses duplicates.
+    const requestedNames = files.map((file, i) => (names[i] || file.name).trim())
     const existing = await searchObjects<DocRow>("OrbitDocsList", {
       where: {
         type: "and",
         value: [
           { type: "eq", field: "addedBy", value: normalizeEmail(userEmail) },
           { type: "eq", field: "isActive", value: true },
+          { type: "in", field: "documentName", value: requestedNames },
         ],
       },
       select: ["documentName", "primaryKey_"],
@@ -62,9 +66,9 @@ export async function POST(request: Request) {
     const existingNames = new Set(
       existing.map((d) => (d.documentName ?? "").trim().toLowerCase())
     )
-    const duplicates = files
-      .map((file, i) => (names[i] || file.name).trim())
-      .filter((name) => existingNames.has(name.toLowerCase()))
+    const duplicates = requestedNames.filter((name) =>
+      existingNames.has(name.toLowerCase())
+    )
     if (duplicates.length > 0) {
       return json(
         { error: "Duplicate document names", duplicates },

@@ -17,6 +17,7 @@ import {
 import { Label } from "@/components/ui/label"
 import { Progress } from "@/components/ui/progress"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
+import { downloadBlob, generateSessionExport } from "@/lib/export-session"
 import { activePath, countBranches, useOrbit } from "@/lib/store"
 import type { ChatSession } from "@/lib/types"
 
@@ -44,6 +45,7 @@ export function ExportDialog({
   const [includeBranches, setIncludeBranches] = React.useState(false)
   const [state, setState] = React.useState<"idle" | "working" | "done">("idle")
   const [progress, setProgress] = React.useState(0)
+  const [blob, setBlob] = React.useState<Blob | null>(null)
 
   const path = activePath(session)
   const turns = path.length
@@ -54,6 +56,7 @@ export function ExportDialog({
     if (!open) {
       setState("idle")
       setProgress(0)
+      setBlob(null)
     }
   }, [open])
 
@@ -62,25 +65,30 @@ export function ExportDialog({
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)/g, "")}.${formatMeta[format].ext}`
 
-  const start = () => {
+  const start = async () => {
     setState("working")
-    setProgress(8)
-    const interval = setInterval(() => {
-      setProgress((p) => {
-        const next = p + 14 + Math.random() * 12
-        if (next >= 100) {
-          clearInterval(interval)
-          setState("done")
-          pushActivity({
-            kind: "export",
-            text: `Session exported to ${formatMeta[format].label}`,
-            detail: `${session.title} · ${turns} turns`,
-          })
-          return 100
-        }
-        return next
+    setProgress(15)
+    try {
+      // generation is fast; the brief progress keeps the transition legible
+      const generated = await generateSessionExport(session, format, {
+        includeCitations,
+        includeThinking,
       })
-    }, 260)
+      setProgress(100)
+      setBlob(generated)
+      setState("done")
+      pushActivity({
+        kind: "export",
+        text: `Session exported to ${formatMeta[format].label}`,
+        detail: `${session.title} · ${turns} turns`,
+      })
+    } catch (error) {
+      setState("idle")
+      setProgress(0)
+      toast.error("Export failed", {
+        description: error instanceof Error ? error.message : undefined,
+      })
+    }
   }
 
   return (
@@ -103,6 +111,7 @@ export function ExportDialog({
             </div>
             <Button
               onClick={() => {
+                if (blob) downloadBlob(blob, fileName)
                 toast("Download started", { description: fileName })
                 onOpenChange(false)
               }}

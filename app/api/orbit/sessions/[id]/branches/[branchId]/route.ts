@@ -1,5 +1,4 @@
 import {
-  foundryUserEmail,
   getSessionBranches,
   getSessionRow,
   pk,
@@ -7,6 +6,7 @@ import {
   updateSessionRow,
 } from "@/lib/foundry/ontology"
 import { errorResponse, json, requireLive } from "@/lib/foundry/http"
+import { resolveRequestUser } from "@/lib/foundry/user"
 
 export const dynamic = "force-dynamic"
 
@@ -18,7 +18,7 @@ export async function PUT(
   if (guard) return guard
   try {
     const { id, branchId } = await params
-    const session = await getSessionRow(id, foundryUserEmail())
+    const session = await getSessionRow(id, await resolveRequestUser(request))
     if (!session) return json({ error: "Session not found" }, { status: 404 })
     const branches = await getSessionBranches(id)
     const branch = branches.find((b) => pk(b) === branchId)
@@ -42,7 +42,7 @@ export async function DELETE(
   if (guard) return guard
   try {
     const { id, branchId } = await params
-    const session = await getSessionRow(id, foundryUserEmail())
+    const session = await getSessionRow(id, await resolveRequestUser(request))
     if (!session) return json({ error: "Session not found" }, { status: 404 })
     const branches = await getSessionBranches(id)
     const branch = branches.find((b) => pk(b) === branchId)

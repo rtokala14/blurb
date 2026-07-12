@@ -1,5 +1,4 @@
 import {
-  foundryUserEmail,
   getAccessibleFolders,
   getDoc,
   normalizeEmail,
@@ -7,19 +6,20 @@ import {
   softDeleteDoc,
 } from "@/lib/foundry/ontology"
 import { errorResponse, json, requireLive } from "@/lib/foundry/http"
+import { resolveRequestUser } from "@/lib/foundry/user"
 
 export const dynamic = "force-dynamic"
 
 /** Soft-delete a document and pull it out of any accessible folders. */
 export async function DELETE(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ pk: string }> }
 ) {
   const guard = requireLive()
   if (guard) return guard
   try {
     const { pk } = await params
-    const userEmail = foundryUserEmail()
+    const userEmail = await resolveRequestUser(request)
     const doc = await getDoc(pk)
     if (!doc || doc.isActive === false) {
       return json({ error: "Document not found" }, { status: 404 })

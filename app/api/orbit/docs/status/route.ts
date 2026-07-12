@@ -1,12 +1,12 @@
 import { getObjectsByIds } from "@/lib/foundry/client"
 import {
-  foundryUserEmail,
   getAccessibleFolders,
   getIndexStatusForDocs,
   normalizeEmail,
   type DocRow,
 } from "@/lib/foundry/ontology"
 import { errorResponse, json, requireLive } from "@/lib/foundry/http"
+import { resolveRequestUser } from "@/lib/foundry/user"
 
 export const dynamic = "force-dynamic"
 
@@ -21,7 +21,7 @@ export async function POST(request: Request) {
     const primaryKeys = (body.primaryKeys ?? []).map(String).filter(Boolean)
     if (primaryKeys.length === 0) return json({ data: [], count: 0 })
 
-    const user = normalizeEmail(foundryUserEmail())
+    const user = normalizeEmail(await resolveRequestUser(request))
     const [docs, statusMap, folders] = await Promise.all([
       getObjectsByIds<DocRow>("OrbitDocsList", "primaryKey_", primaryKeys),
       getIndexStatusForDocs(primaryKeys),

@@ -4,6 +4,7 @@ import {
   requireAccessibleSource,
 } from "@/lib/foundry/sync-browse"
 import { errorResponse, json, requireLive } from "@/lib/foundry/http"
+import { resolveRequestUser } from "@/lib/foundry/user"
 
 export const dynamic = "force-dynamic"
 
@@ -20,7 +21,7 @@ export async function GET(
   if (guard) return guard
   try {
     const { id } = await params
-    if (!(await requireAccessibleSource(id))) {
+    if (!(await requireAccessibleSource(id, await resolveRequestUser(request)))) {
       return json({ error: "Sync source not found" }, { status: 404 })
     }
     const url = new URL(request.url)

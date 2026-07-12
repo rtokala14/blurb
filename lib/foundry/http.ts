@@ -4,6 +4,7 @@ import { NextResponse } from "next/server"
 
 import { FoundryError } from "./client"
 import { isFoundryConfigured } from "./config"
+import { UserResolutionError } from "./user"
 
 /** 503 guard: routes only run in live mode; the UI checks /config first. */
 export function requireLive(): NextResponse | null {
@@ -19,6 +20,9 @@ export function requireLive(): NextResponse | null {
 }
 
 export function errorResponse(error: unknown): NextResponse {
+  if (error instanceof UserResolutionError) {
+    return NextResponse.json({ error: error.message }, { status: error.status })
+  }
   if (error instanceof FoundryError) {
     return NextResponse.json(
       { error: error.message, detail: error.detail },

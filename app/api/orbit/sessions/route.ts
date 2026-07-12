@@ -1,21 +1,21 @@
 import { getFoundryConfig } from "@/lib/foundry/config"
 import {
   createSessionRow,
-  foundryUserEmail,
   listSessions,
   sanitizeAttachments,
   serializeSession,
 } from "@/lib/foundry/ontology"
 import { normalizeMode, THINKING_MODE } from "@/lib/foundry/turn"
 import { errorResponse, json, requireLive } from "@/lib/foundry/http"
+import { resolveRequestUser } from "@/lib/foundry/user"
 
 export const dynamic = "force-dynamic"
 
-export async function GET() {
+export async function GET(request: Request) {
   const guard = requireLive()
   if (guard) return guard
   try {
-    const sessions = await listSessions(foundryUserEmail())
+    const sessions = await listSessions(await resolveRequestUser(request))
     return json({ data: sessions.map((s) => serializeSession(s)), count: sessions.length })
   } catch (error) {
     return errorResponse(error)
@@ -31,7 +31,7 @@ export async function POST(request: Request) {
       docsAttached?: string[]
       foldersAttached?: string[]
     }
-    const userEmail = foundryUserEmail()
+    const userEmail = await resolveRequestUser(request)
     const mode = normalizeMode(body.mode)
     const sanitized = await sanitizeAttachments(
       userEmail,

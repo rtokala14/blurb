@@ -1,25 +1,25 @@
 import { ensureMainBranch } from "@/lib/foundry/chat"
 import {
-  foundryUserEmail,
   getSessionMessages,
   getSessionRow,
   pk,
   serializeContent,
 } from "@/lib/foundry/ontology"
 import { errorResponse, json, requireLive } from "@/lib/foundry/http"
+import { resolveRequestUser } from "@/lib/foundry/user"
 
 export const dynamic = "force-dynamic"
 
 /** Active-branch transcript plus the branch list (PoC /content). */
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const guard = requireLive()
   if (guard) return guard
   try {
     const { id } = await params
-    const userEmail = foundryUserEmail()
+    const userEmail = await resolveRequestUser(request)
     const sessionRow = await getSessionRow(id, userEmail)
     if (!sessionRow) return json({ error: "Session not found" }, { status: 404 })
     const { session, branches } = await ensureMainBranch(sessionRow, userEmail)

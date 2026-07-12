@@ -142,7 +142,10 @@ async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
 export const liveApi = {
   config: () => apiJson<LiveConfig>("/api/orbit/config"),
   bootstrap: () => apiJson<LiveBootstrap>("/api/orbit/bootstrap"),
-  docs: () => apiJson<{ data: LiveDocument[] }>("/api/orbit/docs"),
+  docs: (limit?: number) =>
+    apiJson<{ data: LiveDocument[] }>(
+      `/api/orbit/docs${limit ? `?limit=${limit}` : ""}`
+    ),
   searchDocs: (q: string, limit = 50) =>
     apiJson<{ data: LiveDocument[] }>(
       `/api/orbit/docs?q=${encodeURIComponent(q)}&limit=${limit}`
@@ -173,6 +176,7 @@ export const liveApi = {
     if (!res.ok) throw new Error(data.error ?? `Upload failed (${res.status})`)
     return data
   },
+  folders: () => apiJson<{ data: LiveFolder[] }>("/api/orbit/folders"),
   createFolder: (body: { name: string; color?: string }) =>
     apiJson<LiveFolder>("/api/orbit/folders", {
       method: "POST",

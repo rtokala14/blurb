@@ -158,6 +158,8 @@ export interface ChatSession {
   runStatus?: string
   /** live mode: chat folder this session is filed in */
   chatFolderId?: string | null
+  /** live mode: "regular" | "thinking" — the agent used for new turns */
+  mode?: string
 }
 
 /** Private folder for organizing chat sessions (live mode). */

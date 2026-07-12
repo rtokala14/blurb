@@ -1,5 +1,4 @@
 import {
-  foundryUserEmail,
   listAccessibleDocs,
   listChatFolders,
   listSessions,
@@ -11,6 +10,7 @@ import {
   serializeSyncSource,
 } from "@/lib/foundry/ontology"
 import { errorResponse, json, requireLive } from "@/lib/foundry/http"
+import { resolveRequestUser } from "@/lib/foundry/user"
 
 export const dynamic = "force-dynamic"
 
@@ -18,11 +18,11 @@ export const dynamic = "force-dynamic"
  * Single round-trip client bootstrap: documents, folders, sessions, and
  * sync sources together (avoids a 4-request waterfall on first paint).
  */
-export async function GET() {
+export async function GET(request: Request) {
   const guard = requireLive()
   if (guard) return guard
   try {
-    const userEmail = foundryUserEmail()
+    const userEmail = await resolveRequestUser(request)
     const [docsResult, sessions, syncSources, chatFolders] = await Promise.all([
       listAccessibleDocs(userEmail),
       listSessions(userEmail),

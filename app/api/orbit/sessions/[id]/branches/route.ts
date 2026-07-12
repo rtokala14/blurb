@@ -1,7 +1,6 @@
 import { ensureMainBranch } from "@/lib/foundry/chat"
 import {
   createBranchRow,
-  foundryUserEmail,
   getSessionMessages,
   getSessionRow,
   pk,
@@ -11,18 +10,19 @@ import {
 } from "@/lib/foundry/ontology"
 import { getObject } from "@/lib/foundry/client"
 import { errorResponse, json, requireLive } from "@/lib/foundry/http"
+import { resolveRequestUser } from "@/lib/foundry/user"
 
 export const dynamic = "force-dynamic"
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const guard = requireLive()
   if (guard) return guard
   try {
     const { id } = await params
-    const userEmail = foundryUserEmail()
+    const userEmail = await resolveRequestUser(request)
     const sessionRow = await getSessionRow(id, userEmail)
     if (!sessionRow) return json({ error: "Session not found" }, { status: 404 })
     const { session, branches } = await ensureMainBranch(sessionRow, userEmail)
@@ -46,7 +46,7 @@ export async function POST(
   if (guard) return guard
   try {
     const { id } = await params
-    const userEmail = foundryUserEmail()
+    const userEmail = await resolveRequestUser(request)
     const sessionRow = await getSessionRow(id, userEmail)
     if (!sessionRow) return json({ error: "Session not found" }, { status: 404 })
     const body = (await request.json()) as { anchorMessageId?: string; name?: string }

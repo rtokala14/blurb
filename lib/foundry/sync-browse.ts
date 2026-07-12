@@ -57,9 +57,9 @@ export async function getSourceIndex(
 }
 
 /** Owned-or-shared guard for the explorer routes (PoC _resolve_source_or_403). */
-export async function requireAccessibleSource(sourceId: string) {
-  const { foundryUserEmail, listSyncSources, pk } = await import("./ontology")
-  const sources = await listSyncSources(foundryUserEmail())
+export async function requireAccessibleSource(sourceId: string, userEmail: string) {
+  const { listSyncSources, pk } = await import("./ontology")
+  const sources = await listSyncSources(userEmail)
   return sources.find((s) => pk(s) === sourceId) ?? null
 }
 

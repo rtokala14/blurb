@@ -1,7 +1,10 @@
 import { getSessionTrace } from "@/lib/foundry/client"
-import { foundryUserEmail, getSessionRow } from "@/lib/foundry/ontology"
+import {
+  getSessionRow,
+} from "@/lib/foundry/ontology"
 import { summarizeTrace } from "@/lib/foundry/turn"
 import { errorResponse, json, requireLive } from "@/lib/foundry/http"
+import { resolveRequestUser } from "@/lib/foundry/user"
 
 export const dynamic = "force-dynamic"
 
@@ -19,7 +22,7 @@ export async function GET(
   if (guard) return guard
   try {
     const { id } = await params
-    const session = await getSessionRow(id, foundryUserEmail())
+    const session = await getSessionRow(id, await resolveRequestUser(request))
     if (!session) return json({ error: "Session not found" }, { status: 404 })
 
     const { currentAgentRid, currentSessionId, currentSessionTraceId } = session

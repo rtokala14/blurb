@@ -1,10 +1,10 @@
 import {
-  foundryUserEmail,
   listAccessibleDocs,
   searchAccessibleDocs,
   serializeDoc,
 } from "@/lib/foundry/ontology"
 import { errorResponse, json, requireLive } from "@/lib/foundry/http"
+import { resolveRequestUser } from "@/lib/foundry/user"
 
 export const dynamic = "force-dynamic"
 
@@ -16,13 +16,13 @@ export async function GET(request: Request) {
   const guard = requireLive()
   if (guard) return guard
   try {
-    const userEmail = foundryUserEmail()
+    const userEmail = await resolveRequestUser(request)
     const url = new URL(request.url)
     const q = (url.searchParams.get("q") ?? "").trim()
     const limitParam = Number(url.searchParams.get("limit"))
     const limit =
       Number.isFinite(limitParam) && limitParam > 0
-        ? Math.min(limitParam, 500)
+        ? Math.min(limitParam, 2000)
         : undefined
 
     const result = q
