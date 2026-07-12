@@ -43,12 +43,13 @@ interface OrbitState {
   /** null = probing /api/orbit/config; false = demo simulation; true = Foundry */
   live: boolean | null
   liveUserEmail: string | null
+  liveIsAdmin: boolean
 
   activeSessionId: string
   /** artifact currently open in the chat-side Studio panel (null = closed) */
   openArtifactId: string | null
 
-  setLive: (live: boolean, userEmail?: string) => void
+  setLive: (live: boolean, userEmail?: string, isAdmin?: boolean) => void
   hydrateLive: (data: {
     docs: Doc[]
     folders: DocFolder[]
@@ -117,8 +118,10 @@ export const useOrbit = create<OrbitState>((set) => ({
   openArtifactId: null,
   live: null,
   liveUserEmail: null,
+  liveIsAdmin: false,
 
-  setLive: (live, userEmail) => set({ live, liveUserEmail: userEmail ?? null }),
+  setLive: (live, userEmail, isAdmin) =>
+    set({ live, liveUserEmail: userEmail ?? null, liveIsAdmin: Boolean(isAdmin) }),
   hydrateLive: (data) =>
     set((s) => ({
       docs: data.docs,

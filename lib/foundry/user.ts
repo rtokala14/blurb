@@ -19,10 +19,10 @@ export const REQUEST_USER_HEADER = "x-alluvial-user-email"
 const DEFAULT_DAILY_UPLOAD_LIMIT = 10
 const DEFAULT_BONUS_UPLOAD_LIMIT = 0
 
-/** email -> resolution result, cached to keep the check off the hot path. */
+/** email -> resolved row, cached to keep the check off the hot path. */
 const USER_CACHE_TTL_MS = 5 * 60_000
-const userCache = new Map<string, { at: number; active: boolean }>()
-const userInFlight = new Map<string, Promise<boolean>>()
+const userCache = new Map<string, { at: number; row: OrbitUserRow | null }>()
+const userInFlight = new Map<string, Promise<OrbitUserRow | null>>()
 
 export class UserResolutionError extends Error {
   constructor(
@@ -34,10 +34,21 @@ export class UserResolutionError extends Error {
   }
 }
 
-interface UserRow {
+export interface OrbitUserRow {
   __primaryKey: string
+  primaryKey_?: string
   email?: string
+  name?: string
   isActive?: boolean
+  isAdmin?: boolean
+  featureFlags?: string[]
+  hasUnlimitedUploads?: boolean
+  dailyUploadLimit?: number
+  bonusUploadLimit?: number
+  bonusExpiresAt?: string
+  bonusReason?: string
+  createdAt?: string
+  updatedAt?: string
 }
 
 export function deriveNameFromEmail(email: string): string {
@@ -52,8 +63,8 @@ export function deriveNameFromEmail(email: string): string {
     .join(" ")
 }
 
-async function findUserByEmail(email: string): Promise<UserRow | null> {
-  const rows = await searchObjects<UserRow>("OrbitDocsUser", {
+async function findUserByEmail(email: string): Promise<OrbitUserRow | null> {
+  const rows = await searchObjects<OrbitUserRow>("OrbitDocsUser", {
     where: { type: "eq", field: "email", value: email },
     pageSize: 10,
   })
@@ -99,10 +110,12 @@ async function createDefaultUser(email: string): Promise<void> {
   }
 }
 
-/** Provision-or-verify, cached with single-flight. Returns isActive. */
-async function ensureProvisioned(email: string): Promise<boolean> {
+/** Provision-or-verify, cached with single-flight. Returns the user row. */
+export async function getProvisionedUser(
+  email: string
+): Promise<OrbitUserRow | null> {
   const cached = userCache.get(email)
-  if (cached && Date.now() - cached.at < USER_CACHE_TTL_MS) return cached.active
+  if (cached && Date.now() - cached.at < USER_CACHE_TTL_MS) return cached.row
   const inFlight = userInFlight.get(email)
   if (inFlight) return inFlight
 
@@ -112,12 +125,17 @@ async function ensureProvisioned(email: string): Promise<boolean> {
       await createDefaultUser(email)
       user = await findUserByEmail(email)
     }
-    const active = user ? user.isActive !== false : true
-    userCache.set(email, { at: Date.now(), active })
-    return active
+    userCache.set(email, { at: Date.now(), row: user })
+    return user
   })().finally(() => userInFlight.delete(email))
   userInFlight.set(email, promise)
   return promise
+}
+
+/** Bust the cache after admin edits so changes take effect immediately. */
+export function invalidateUserCache(email?: string): void {
+  if (email) userCache.delete(normalizeEmail(email))
+  else userCache.clear()
 }
 
 function isLocalHost(request: Request): boolean {
@@ -146,7 +164,22 @@ export async function resolveRequestUser(request: Request): Promise<string> {
       throw new UserResolutionError("Missing user email header", 401)
     }
   }
-  const active = await ensureProvisioned(email).catch(() => true)
-  if (!active) throw new UserResolutionError("User is inactive", 403)
+  const user = await getProvisionedUser(email).catch(() => null)
+  if (user && user.isActive === false) {
+    throw new UserResolutionError("User is inactive", 403)
+  }
   return email
+}
+
+/** Resolve and require an admin (PoC require_admin_user). */
+export async function requireAdminUser(request: Request): Promise<{
+  email: string
+  user: OrbitUserRow
+}> {
+  const email = await resolveRequestUser(request)
+  const user = await getProvisionedUser(email)
+  if (!user || !user.isAdmin) {
+    throw new UserResolutionError("Admin access required", 403)
+  }
+  return { email, user }
 }

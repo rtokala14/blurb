@@ -12,6 +12,7 @@ export interface LiveConfig {
   hostname: string | null
   userEmail: string
   ontology: string
+  isAdmin?: boolean
 }
 
 export interface LiveDocument {
@@ -173,7 +174,18 @@ export const liveApi = {
       error?: string
       duplicates?: string[]
     }
-    if (!res.ok) throw new Error(data.error ?? `Upload failed (${res.status})`)
+    if (!res.ok) {
+      if (res.status === 409 && data.duplicates?.length) {
+        throw new Error(
+          `Already in your library: ${data.duplicates.join(", ")}. Rename the ${
+            data.duplicates.length === 1 ? "file" : "files"
+          } or delete the existing ${
+            data.duplicates.length === 1 ? "copy" : "copies"
+          } first.`
+        )
+      }
+      throw new Error(data.error ?? `Upload failed (${res.status})`)
+    }
     return data
   },
   folders: () => apiJson<{ data: LiveFolder[] }>("/api/orbit/folders"),
@@ -390,4 +402,89 @@ export async function streamTurn(
     return
   }
   callbacks.onComplete(trimmed)
+}
+
+export interface AdminOverview {
+  generatedAt: string
+  days: number
+  includeAdmins: boolean
+  includeSynced: boolean
+  totals: {
+    users: number
+    activeUsers: number
+    admins: number
+    unlimitedUsers: number
+    usersNearQuota: number
+    uploadsToday: number
+    sessionsToday: number
+    docsToday: number
+    thinkingSessionsInRange: number
+    corpus: {
+      documents: number
+      indexed: number
+      indexedBase: number
+      indexedPct: number
+      syncedDocuments: number
+      manualDocuments: number
+      totalPages: number
+    }
+  }
+  trends: { date: string; sessions: number; turns: number; documents: number; uniqueUsers: number }[]
+  powerUsers: { email: string; name: string; isAdmin: boolean; sessions: number; turns: number; documents: number }[]
+  usersNearQuota: AdminUser[]
+}
+
+export interface AdminUser {
+  primaryKey: string
+  email: string
+  name: string
+  isAdmin: boolean
+  isActive: boolean
+  hasUnlimitedUploads: boolean
+  dailyUploadLimit: number
+  bonusUploadLimit: number
+  bonusExpiresAt: string | null
+  effectiveLimit: number | null
+  uploadsUsedToday: number
+  uploadsRemainingToday: number | null
+  documents: number
+  syncedDocuments: number
+  createdAt: string | null
+  updatedAt: string | null
+}
+
+export interface AdminSessionRow {
+  rid: string
+  title: string
+  user: string
+  mode: string
+  createdAt: string | null
+  updatedAt: string | null
+  runStatus: string
+}
+
+export const adminApi = {
+  overview: (opts: { days: number; includeAdmins: boolean; includeSynced: boolean }) =>
+    apiJson<AdminOverview>(
+      `/api/orbit/admin/overview?days=${opts.days}&includeAdmins=${opts.includeAdmins}&includeSynced=${opts.includeSynced}`
+    ),
+  users: () => apiJson<{ data: AdminUser[] }>("/api/orbit/admin/users"),
+  updateUser: (
+    pk: string,
+    body: Partial<{
+      name: string
+      isAdmin: boolean
+      isActive: boolean
+      hasUnlimitedUploads: boolean
+      dailyUploadLimit: number
+      bonusUploadLimit: number
+      bonusExpiresAt: string | null
+    }>
+  ) =>
+    apiJson<{ success: boolean; data: AdminUser | null }>(
+      `/api/orbit/admin/users/${encodeURIComponent(pk)}`,
+      { method: "PUT", body: JSON.stringify(body) }
+    ),
+  sessions: (limit = 200) =>
+    apiJson<{ data: AdminSessionRow[] }>(`/api/orbit/admin/sessions?limit=${limit}`),
 }

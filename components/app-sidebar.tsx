@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation"
 import {
   Cable,
   Check,
+  ShieldCheck,
   ChevronRight,
   FolderOpen,
   FolderPlus,
@@ -79,6 +80,7 @@ const byRecency = (a: ChatSession, b: ChatSession) => {
 export function AppSidebar() {
   const pathname = usePathname()
   const sessions = useOrbit((s) => s.sessions)
+  const isAdmin = useOrbit((s) => s.liveIsAdmin)
   const chatFolders = useOrbit((s) => s.chatFolders)
   const live = useOrbit((s) => s.live === true)
   const activeSessionId = useOrbit((s) => s.activeSessionId)
@@ -255,6 +257,20 @@ export function AppSidebar() {
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}
+              {isAdmin && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    tooltip="Admin"
+                    isActive={pathname.startsWith("/admin")}
+                  >
+                    <Link href="/admin">
+                      <ShieldCheck />
+                      <span>Admin</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

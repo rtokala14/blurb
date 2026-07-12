@@ -8,7 +8,12 @@ import {
 } from "@/lib/foundry/ontology"
 import { searchObjects } from "@/lib/foundry/client"
 import { errorResponse, json, requireLive } from "@/lib/foundry/http"
-import { resolveRequestUser } from "@/lib/foundry/user"
+import { getProvisionedUser, resolveRequestUser } from "@/lib/foundry/user"
+import {
+  commitUploadUsage,
+  releaseUploadCapacity,
+  reserveUploadCapacity,
+} from "@/lib/foundry/quota"
 
 export const dynamic = "force-dynamic"
 export const maxDuration = 120
@@ -76,7 +81,16 @@ export async function POST(request: Request) {
       )
     }
 
+    // Daily quota (PoC upload_quota): reserve before the uploads start so
+    // concurrent requests can't blow past the limit; committed below.
+    const reservationId = crypto.randomUUID()
+    const userRow = await getProvisionedUser(userEmail)
+    if (userRow) {
+      await reserveUploadCapacity(userRow, files.length, reservationId)
+    }
+
     const uploaded: { documentName: string; noPages: number }[] = []
+    try {
     for (const [i, file] of files.entries()) {
       const documentName = (names[i] || file.name).trim()
       const bytes = await file.arrayBuffer()
@@ -100,6 +114,12 @@ export async function POST(request: Request) {
         addedBy: userEmail,
       })
       uploaded.push({ documentName, noPages })
+    }
+    } finally {
+      // record whatever made it up, even on partial failure
+      await commitUploadUsage(userEmail, uploaded.length, reservationId).catch(
+        () => releaseUploadCapacity(reservationId)
+      )
     }
 
     return json({ success: true, uploaded })

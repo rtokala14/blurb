@@ -51,7 +51,7 @@ export function LiveProvider({ children }: { children: React.ReactNode }) {
       .config()
       .then(async (config) => {
         if (cancelled) return
-        useOrbit.getState().setLive(config.live, config.userEmail)
+        useOrbit.getState().setLive(config.live, config.userEmail, config.isAdmin)
         if (!config.live) return
         try {
           const bootstrap = await liveApi.bootstrap()

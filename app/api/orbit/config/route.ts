@@ -3,7 +3,7 @@ import { NextResponse } from "next/server"
 import { getFoundryConfig, isFoundryConfigured } from "@/lib/foundry/config"
 import { getFoundryToken } from "@/lib/foundry/token"
 import { getAccessibleFolders } from "@/lib/foundry/ontology"
-import { resolveRequestUser, UserResolutionError } from "@/lib/foundry/user"
+import { getProvisionedUser, resolveRequestUser, UserResolutionError } from "@/lib/foundry/user"
 import { errorResponse } from "@/lib/foundry/http"
 
 export const dynamic = "force-dynamic"
@@ -13,9 +13,11 @@ export async function GET(request: Request) {
   const live = isFoundryConfigured()
   const cfg = getFoundryConfig()
   let userEmail = cfg.userEmail
+  let isAdmin = false
   if (live) {
     try {
       userEmail = await resolveRequestUser(request)
+      isAdmin = Boolean((await getProvisionedUser(userEmail))?.isAdmin)
     } catch (error) {
       if (error instanceof UserResolutionError) return errorResponse(error)
       // resolution hiccups (Foundry blip) shouldn't block the mode probe
@@ -33,5 +35,6 @@ export async function GET(request: Request) {
     hostname: live ? cfg.hostname : null,
     userEmail,
     ontology: cfg.ontology,
+    isAdmin,
   })
 }
