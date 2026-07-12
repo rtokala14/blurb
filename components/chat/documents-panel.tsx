@@ -15,6 +15,7 @@ import {
 
 import { DocIcon } from "@/components/doc-icon"
 import { UploadDialog } from "@/components/documents/upload-dialog"
+import { SyncSourcesTab } from "@/components/chat/sync-sources-tab"
 import { adoptSearchResult, useLiveDocSearch } from "@/hooks/use-live-doc-search"
 import { PdfViewerDialog } from "@/components/pdf-viewer-dialog"
 import { Badge } from "@/components/ui/badge"
@@ -54,6 +55,7 @@ export function DocumentsPanel({
   const docs = useOrbit((s) => s.docs)
   const folders = useOrbit((s) => s.folders)
   const sites = useOrbit((s) => s.sites)
+  const live = useOrbit((s) => s.live === true)
   const setSessionScope = useOrbit((s) => s.setSessionScope)
   const syncSite = useSharePointSync()
 
@@ -348,6 +350,19 @@ export function DocumentsPanel({
                 </>
               )}
             </>
+          ) : live ? (
+            /* Live mode: PoC-style explorer over the real sync-item tree —
+               deep folder navigation, in-source search, folder tri-state. */
+            <SyncSourcesTab
+              selected={selected}
+              onToggleDocs={(add, remove) => {
+                const next = new Set(selected)
+                add.forEach((id) => next.add(id))
+                remove.forEach((id) => next.delete(id))
+                setSelected(next)
+              }}
+              onPreviewDoc={setPreviewDoc}
+            />
           ) : (
             <>
               {sites.map((site) => {

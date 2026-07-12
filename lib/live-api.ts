@@ -230,6 +230,39 @@ export const liveApi = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+
+  syncBrowse: (sourceId: string, path: string) =>
+    apiJson<SyncBrowseResponse>(
+      `/api/orbit/sync/sources/${encodeURIComponent(sourceId)}/browse?path=${encodeURIComponent(path)}`
+    ),
+  syncSearch: (sourceId: string, q: string) =>
+    apiJson<SyncBrowseResponse>(
+      `/api/orbit/sync/sources/${encodeURIComponent(sourceId)}/search?q=${encodeURIComponent(q)}`
+    ),
+  syncFolderDocs: (sourceId: string, path: string) =>
+    apiJson<{ path: string; docPks: string[]; count: number }>(
+      `/api/orbit/sync/sources/${encodeURIComponent(sourceId)}/folder-docs?path=${encodeURIComponent(path)}`
+    ),
+}
+
+export interface SyncEntry {
+  name: string
+  path: string
+  isFolder: boolean
+  orbitObjectPk: string | null
+  syncStatus: string | null
+  folderCount: number
+  fileCount: number
+}
+
+export interface SyncBrowseResponse {
+  path: string
+  entries: SyncEntry[]
+  total: number
+  offset: number
+  limit: number
+  totalFiles: number
+  totalFolders: number
 }
 
 export interface StreamTurnCallbacks {
