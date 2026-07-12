@@ -24,6 +24,7 @@ import { CitationChip } from "@/components/chat/citation-chip"
 import { EmailDialog } from "@/components/chat/email-dialog"
 import { MessageContent } from "@/components/chat/message-content"
 import { ThinkingIndicator } from "@/components/chat/thinking-indicator"
+import { LivePdfDialog } from "@/components/live-pdf-dialog"
 import { PdfViewerDialog } from "@/components/pdf-viewer-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -194,9 +195,8 @@ export function Message({
   }
 
   /* ----------------------------- assistant ----------------------------- */
-  const citedDocs = (message.citations ?? [])
-    .map((c) => docs.find((d) => d.id === c.docId))
-    .filter((d, i, arr) => d && arr.indexOf(d) === i)
+  const citations = message.citations ?? []
+  const hasCitations = citations.length > 0
 
   return (
     <div id={`msg-${message.id}`} className="group flex gap-3">
@@ -223,14 +223,15 @@ export function Message({
         ))}
 
         {/* Sources strip */}
-        {message.phase === "done" && citedDocs.length > 0 && (
+        {message.phase === "done" && hasCitations && (
           <div className="mt-3 flex flex-wrap items-center gap-1.5">
             <span className="text-muted-foreground flex items-center gap-1 text-xs">
               <FileSearch className="size-3" /> Sources:
             </span>
-            {(message.citations ?? []).map((c) => {
+            {citations.map((c) => {
               const doc = docs.find((d) => d.id === c.docId)
-              if (!doc) return null
+              const name = doc?.name ?? c.docName
+              if (!name) return null
               return (
                 <Badge
                   key={c.n}
@@ -241,9 +242,11 @@ export function Message({
                   <span className="bg-primary/10 text-primary flex size-3.5 items-center justify-center rounded-full text-[9px] font-semibold">
                     {c.n}
                   </span>
-                  <DocIcon type={doc.type} className="size-3" />
-                  <span className="truncate">{doc.name}</span>
-                  <span className="text-muted-foreground">p.{c.page}</span>
+                  {doc && <DocIcon type={doc.type} className="size-3" />}
+                  <span className="truncate">{name}</span>
+                  <span className="text-muted-foreground">
+                    p.{c.pagesLabel ?? c.page}
+                  </span>
                 </Badge>
               )
             })}
@@ -328,18 +331,26 @@ export function Message({
         open={emailOpen}
         onOpenChange={setEmailOpen}
       />
-      <PdfViewerDialog
-        doc={
-          openCitation
-            ? (docs.find((d) => d.id === openCitation.docId) ?? null)
-            : null
-        }
-        page={openCitation?.page}
-        quote={openCitation?.quote}
-        citationLabel={openCitation ? `Citation ${openCitation.n}` : undefined}
-        open={openCitation !== null}
-        onOpenChange={(open) => !open && setOpenCitation(null)}
-      />
+      {openCitation?.mediaRid ? (
+        <LivePdfDialog
+          citation={openCitation}
+          open={openCitation !== null}
+          onOpenChange={(open) => !open && setOpenCitation(null)}
+        />
+      ) : (
+        <PdfViewerDialog
+          doc={
+            openCitation
+              ? (docs.find((d) => d.id === openCitation.docId) ?? null)
+              : null
+          }
+          page={openCitation?.page}
+          quote={openCitation?.quote}
+          citationLabel={openCitation ? `Citation ${openCitation.n}` : undefined}
+          open={openCitation !== null}
+          onOpenChange={(open) => !open && setOpenCitation(null)}
+        />
+      )}
     </div>
   )
 }

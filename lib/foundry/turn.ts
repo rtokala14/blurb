@@ -1,0 +1,254 @@
+/**
+ * Pure turn-preparation logic for AIP agent chats, ported from the PoC's
+ * services/session_v2.py. No I/O — unit-testable.
+ */
+
+export const REGULAR_MODE = "regular"
+export const THINKING_MODE = "thinking"
+const LEGACY_DEEP_RESEARCH_MODE = "deep_research"
+
+export type ChatMode = typeof REGULAR_MODE | typeof THINKING_MODE
+
+export function normalizeMode(value: string | null | undefined): ChatMode {
+  if (value === THINKING_MODE || value === LEGACY_DEEP_RESEARCH_MODE) {
+    return THINKING_MODE
+  }
+  return REGULAR_MODE
+}
+
+export function normalizeTitle(value: string): string {
+  const normalized = value.replace(/\s+/g, " ").trim()
+  if (!normalized) return "New chat"
+  return normalized.slice(0, 200)
+}
+
+export interface PersistedMessage {
+  id: string
+  isAgent: boolean
+  message: string
+  createdAt?: string | null
+}
+
+function sortMessages<T extends PersistedMessage>(messages: T[]): T[] {
+  return [...messages].sort((a, b) => {
+    const ta = a.createdAt ?? ""
+    const tb = b.createdAt ?? ""
+    if (ta !== tb) return ta < tb ? -1 : 1
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+  })
+}
+
+/**
+ * Build the objectSet parameter scoping the agent to the selected documents.
+ * Shape must match the PoC exactly (union of per-doc primaryKey filters).
+ */
+export function buildParameterInputs(
+  userDocs: string[],
+  {
+    mode,
+    compactContext = "",
+    ontology,
+  }: { mode: string; compactContext?: string; ontology: string }
+): Record<string, unknown> {
+  const parameterInputs: Record<string, unknown> = {}
+
+  if (userDocs.length > 0) {
+    parameterInputs.userDocs = {
+      type: "objectSet",
+      ontology,
+      objectSet: {
+        type: "union",
+        objectSets: userDocs.map((docId) => ({
+          type: "filter",
+          objectSet: { type: "base", objectType: "OrbitDocsList" },
+          where: { type: "eq", field: "primaryKey_", value: docId },
+        })),
+      },
+    }
+  }
+
+  if (normalizeMode(mode) === THINKING_MODE && compactContext.trim()) {
+    parameterInputs.prevContext = { type: "string", value: compactContext }
+  }
+
+  return parameterInputs
+}
+
+/** Compact continuation context: summary + first/latest user + latest agent. */
+export function buildCompactContext(
+  summary: string | null | undefined,
+  persistedMessages: PersistedMessage[]
+): string {
+  const ordered = sortMessages(persistedMessages)
+  if (ordered.length === 0 && !(summary ?? "").trim()) return ""
+
+  const firstUser = ordered.find((m) => !m.isAgent)
+  const latestAgent = [...ordered].reverse().find((m) => m.isAgent)
+  const latestUser = [...ordered]
+    .reverse()
+    .find((m) => !m.isAgent && m !== firstUser)
+
+  const sections: string[] = []
+  if ((summary ?? "").trim()) sections.push(summary!.trim())
+  if (firstUser?.message.trim())
+    sections.push(`Initial user message:\n${firstUser.message.trim()}`)
+  if (latestUser?.message.trim())
+    sections.push(`Latest user message:\n${latestUser.message.trim()}`)
+  if (latestAgent?.message.trim())
+    sections.push(`Latest assistant message:\n${latestAgent.message.trim()}`)
+
+  return sections.join("\n\n").trim()
+}
+
+export function wrapRegularModePrompt(
+  compactContext: string,
+  userInput: string
+): string {
+  const context = compactContext.trim()
+  const message = userInput.trim()
+  if (!context) return message
+  return (
+    "Use the following chat context to answer the user's latest question.\n\n" +
+    `${context}\n\n` +
+    `Current user message:\n${message}`
+  ).trim()
+}
+
+export function buildSummaryPrompt(transcript: string): string {
+  return (
+    "Summarize the following chat so a future response can continue it reliably.\n" +
+    "Be concise, factual, and preserve user intent and important document-backed facts.\n\n" +
+    "Return markdown with exactly these sections:\n" +
+    "## User Goal\n" +
+    "## Important Facts From Documents\n" +
+    "## Decisions Already Made\n" +
+    "## Open Questions\n" +
+    "## Tone And Format Constraints\n\n" +
+    `Transcript:\n${transcript}`
+  )
+}
+
+export function buildTitlePrompt(transcript: string): string {
+  return (
+    "Write a short title for this chat.\n" +
+    "Keep it specific, professional, and under 8 words.\n" +
+    "Do not use quotes, markdown, numbering, or trailing punctuation.\n" +
+    "Return only the title text.\n\n" +
+    `Transcript:\n${transcript}`
+  )
+}
+
+export interface TurnRequest {
+  agentRid: string
+  agentVersion: string | null
+  userInput: string
+  parameterInputs: Record<string, unknown>
+  compactContext: string
+}
+
+export function prepareTurnRequest({
+  mode,
+  summary,
+  persistedMessages,
+  userInput,
+  userDocs,
+  ontology,
+  agents,
+  pinnedAgentRid,
+  pinnedAgentVersion,
+}: {
+  mode: string
+  summary: string | null | undefined
+  persistedMessages: PersistedMessage[]
+  userInput: string
+  userDocs: string[]
+  ontology: string
+  agents: { primary: string; thinking: string }
+  /** session's current agent rid/version — version reused only if same agent */
+  pinnedAgentRid?: string | null
+  pinnedAgentVersion?: string | null
+}): TurnRequest {
+  const normalizedMode = normalizeMode(mode)
+  const compactContext = buildCompactContext(summary, persistedMessages)
+  const parameterInputs = buildParameterInputs(userDocs, {
+    mode: normalizedMode,
+    compactContext,
+    ontology,
+  })
+
+  const targetAgentRid =
+    normalizedMode === THINKING_MODE ? agents.thinking : agents.primary
+  const agentVersion =
+    pinnedAgentRid === targetAgentRid && pinnedAgentVersion?.trim()
+      ? pinnedAgentVersion
+      : null
+
+  return {
+    agentRid: targetAgentRid,
+    agentVersion,
+    userInput:
+      normalizedMode === THINKING_MODE
+        ? userInput.trim()
+        : wrapRegularModePrompt(compactContext, userInput),
+    parameterInputs,
+    compactContext,
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Stream error sentinel (matches PoC protocol)                         */
+/* ------------------------------------------------------------------ */
+
+export const STREAM_ERROR_PREFIX = "__orbit_stream_error__:"
+
+export interface StreamErrorPayload {
+  __error: true
+  type: "context_exceeded" | "error"
+  title: string
+  message: string
+  raw?: string
+}
+
+export function buildStreamErrorPayload(errorText: string): StreamErrorPayload {
+  const normalized = errorText.toLowerCase()
+  if (
+    normalized.includes("contextsizeexceeded") ||
+    normalized.includes("contextwindowexceeded")
+  ) {
+    return {
+      __error: true,
+      type: "context_exceeded",
+      title: "Conversation limit reached",
+      message:
+        "This response exceeded the available model context window. Please try again.",
+      raw: errorText,
+    }
+  }
+  return {
+    __error: true,
+    type: "error",
+    title: "We couldn't finish that response",
+    message:
+      "Something went wrong while generating the answer. Please try again.",
+    raw: errorText,
+  }
+}
+
+export function encodeStreamError(errorText: string): string {
+  return `${STREAM_ERROR_PREFIX}${JSON.stringify(buildStreamErrorPayload(errorText))}`
+}
+
+export function parseStreamError(text: string): StreamErrorPayload | null {
+  const trimmed = text.trim()
+  if (!trimmed.startsWith(STREAM_ERROR_PREFIX)) return null
+  try {
+    return JSON.parse(trimmed.slice(STREAM_ERROR_PREFIX.length))
+  } catch {
+    return {
+      __error: true,
+      type: "error",
+      title: "We couldn't finish that response",
+      message: trimmed.slice(STREAM_ERROR_PREFIX.length),
+    }
+  }
+}

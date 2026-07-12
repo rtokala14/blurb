@@ -13,6 +13,7 @@ import {
 import { toast } from "sonner"
 
 import { DocIcon, docTypeLabel } from "@/components/doc-icon"
+import { LivePdfDialog } from "@/components/live-pdf-dialog"
 import { PdfViewerDialog } from "@/components/pdf-viewer-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -231,11 +232,26 @@ export function DocPreviewSheet({
         </SheetContent>
       </Sheet>
 
-      <PdfViewerDialog
-        doc={doc}
-        open={viewerOpen}
-        onOpenChange={setViewerOpen}
-      />
+      {doc.mediaRid ? (
+        <LivePdfDialog
+          citation={{
+            n: 0,
+            docId: doc.id,
+            page: 1,
+            quote: "",
+            mediaRid: doc.mediaRid,
+            docName: doc.name,
+          }}
+          open={viewerOpen}
+          onOpenChange={setViewerOpen}
+        />
+      ) : (
+        <PdfViewerDialog
+          doc={doc}
+          open={viewerOpen}
+          onOpenChange={setViewerOpen}
+        />
+      )}
     </>
   )
 }

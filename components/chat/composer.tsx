@@ -53,6 +53,7 @@ export function Composer({
   onStop,
   onOpenContext,
   contextOpen,
+  live = false,
 }: {
   session: ChatSession
   isBusy: boolean
@@ -60,6 +61,7 @@ export function Composer({
   onStop: () => void
   onOpenContext: () => void
   contextOpen: boolean
+  live?: boolean
 }) {
   const docs = useOrbit((s) => s.docs)
   const setSessionScope = useOrbit((s) => s.setSessionScope)
@@ -222,8 +224,9 @@ export function Composer({
           </div>
         </div>
         <p className="text-muted-foreground mt-1.5 text-center text-[11px]">
-          Answers are grounded in your selected documents · verify citations
-          before sharing externally
+          {live
+            ? "Grounded in your selected documents via Foundry · verify citations before sharing externally"
+            : "Answers are grounded in your selected documents · verify citations before sharing externally"}
         </p>
       </div>
     </div>

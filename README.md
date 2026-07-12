@@ -4,9 +4,16 @@ A UI/UX prototype for an **enterprise document intelligence** product — built 
 [Next.js](https://nextjs.org) (App Router), [Bun](https://bun.sh), Tailwind CSS v4,
 and the latest [shadcn/ui](https://ui.shadcn.com) component baseline.
 
-Everything is a **fully interactive placeholder**: no backend, no API keys. All data
-is seeded client-side and every flow (uploads, syncs, streaming, generation) is
-simulated with realistic timing so the complete experience can be evaluated.
+It runs in two modes:
+
+- **Demo** (default, no config) — fully interactive placeholder with seeded
+  client-side data; every flow is simulated with realistic timing.
+- **Live** — set Foundry credentials (see below) and `/api/orbit/*` routes
+  proxy **Palantir Foundry** over plain REST (no SDK): real documents, folders,
+  chat with the AIP agent, streamed answers, and inline citations that open the
+  actual source PDF. See [`docs/FOUNDRY_INTEGRATION.md`](docs/FOUNDRY_INTEGRATION.md).
+
+The mode is detected automatically at load; the same UI drives both.
 
 ## Run it
 
@@ -16,6 +23,14 @@ bun dev        # http://localhost:3000
 ```
 
 `bun run build` produces a production build; `bun start` serves it.
+`bun test` runs the unit suite (Foundry turn prep, citation parsing, mappers).
+
+### Live mode (Palantir Foundry)
+
+Copy `.env.example` to `.env.local` and set either a `FOUNDRY_TOKEN` or
+`FOUNDRY_CLIENT_ID`/`FOUNDRY_CLIENT_SECRET` (plus `ORBIT_USER_EMAIL`). On next
+load the app connects to Foundry; without them it stays in demo mode. Full
+detail in [`docs/FOUNDRY_INTEGRATION.md`](docs/FOUNDRY_INTEGRATION.md).
 
 ### SendGrid (optional)
 

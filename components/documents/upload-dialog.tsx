@@ -27,6 +27,8 @@ import {
 import { Switch } from "@/components/ui/switch"
 import { cn } from "@/lib/utils"
 import { formatSize } from "@/lib/format"
+import { liveApi } from "@/lib/live-api"
+import { mapLiveDoc } from "@/lib/live-map"
 import { uid, useOrbit } from "@/lib/store"
 import type { Doc, DocType } from "@/lib/types"
 
@@ -37,6 +39,8 @@ interface PendingFile {
   sizeKB: number
   /** doc id once the simulated upload has started */
   docId?: string
+  /** the real File (live mode only) */
+  file?: File
 }
 
 const sampleFiles: Array<Pick<PendingFile, "name" | "type" | "sizeKB">> = [
@@ -76,6 +80,7 @@ export function UploadDialog({
   const addDoc = useOrbit((s) => s.addDoc)
   const updateDoc = useOrbit((s) => s.updateDoc)
   const pushActivity = useOrbit((s) => s.pushActivity)
+  const isLive = useOrbit((s) => s.live === true)
 
   const [files, setFiles] = React.useState<PendingFile[]>([])
   const [folderId, setFolderId] = React.useState<string>(
@@ -108,31 +113,33 @@ export function UploadDialog({
     files.some((f) => f.docId === d.id)
   )
   const allDone =
+    !isLive &&
     running &&
     uploadingDocs.length > 0 &&
     uploadingDocs.every((d) => d.status === "ready")
 
-  const queue = (items: Array<Pick<PendingFile, "name" | "type" | "sizeKB">>) =>
+  const queue = (items: Array<Pick<PendingFile, "name" | "type" | "sizeKB" | "file">>) =>
     setFiles((prev) => [
       ...prev,
       ...items.map((f) => ({ ...f, id: uid("file") })),
     ])
 
+  const queueRealFiles = (list: File[]) =>
+    queue(
+      list.map((f) => ({
+        name: f.name,
+        type: typeFromName(f.name),
+        sizeKB: Math.max(1, Math.round(f.size / 1024)),
+        file: f,
+      }))
+    )
+
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault()
     setDragging(false)
     const dropped = Array.from(e.dataTransfer.files ?? [])
-    if (dropped.length) {
-      queue(
-        dropped.map((f) => ({
-          name: f.name,
-          type: typeFromName(f.name),
-          sizeKB: Math.max(1, Math.round(f.size / 1024)),
-        }))
-      )
-    } else {
-      queue(sampleFiles)
-    }
+    if (dropped.length) queueRealFiles(dropped)
+    else if (!isLive) queue(sampleFiles)
   }
 
   /** POST the batch to the SendGrid-backed notification route. */
@@ -188,7 +195,87 @@ export function UploadDialog({
       })
   }, [])
 
+  /** Live upload: POST real files to Foundry, refresh, then poll indexing. */
+  const startLive = async () => {
+    setRunning(true)
+    const realFiles = files
+      .filter((f) => f.file)
+      .map((f) => ({ file: f.file!, name: f.name }))
+    if (realFiles.length === 0) {
+      setRunning(false)
+      toast.error("No files to upload")
+      return
+    }
+    try {
+      await liveApi.uploadDocs(realFiles)
+      pushActivity({
+        kind: "upload",
+        text: `Uploaded ${realFiles.length} ${realFiles.length === 1 ? "file" : "files"} to Foundry`,
+        detail: "Indexing in progress",
+      })
+      toast.success("Uploaded to Foundry", {
+        description: "Indexing runs in the background; statuses refresh automatically.",
+      })
+
+      const { data } = await liveApi.docs()
+      const mapped = data.map((d) => mapLiveDoc(d, new Map()))
+      useOrbit.setState((prev) => ({
+        docs: mapped.map((doc) => {
+          // keep any folder assignment the store already knew about
+          const existing = prev.docs.find((d) => d.id === doc.id)
+          return existing ? { ...doc, folderId: existing.folderId } : doc
+        }),
+      }))
+
+      const batchIds = mapped
+        .filter((d) => realFiles.some((rf) => rf.name === d.name))
+        .map((d) => d.id)
+      batchRef.current = {
+        ids: batchIds,
+        email: notifyEmail.trim(),
+        enabled: notifyEnabled && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(notifyEmail),
+        notified: false,
+      }
+      const poll = setInterval(async () => {
+        try {
+          const statuses = await liveApi.docStatuses(batchIds)
+          for (const s of statuses.data) {
+            if (s.isIndexed) {
+              updateDoc(s.primaryKey, {
+                status: "ready",
+                pages: s.noPages ?? undefined,
+              })
+            }
+          }
+          const allReady = batchIds.every(
+            (id) =>
+              useOrbit.getState().docs.find((d) => d.id === id)?.status === "ready"
+          )
+          if (allReady) {
+            clearInterval(poll)
+            maybeNotify()
+          }
+        } catch {
+          /* retry next tick */
+        }
+      }, 15000)
+      timers.current.push(poll as unknown as ReturnType<typeof setInterval>)
+      // Upload is done; indexing continues in the background (tracked in the
+      // library). Close the dialog so the user isn't blocked.
+      setRunning(false)
+      onOpenChange(false)
+    } catch (error) {
+      setRunning(false)
+      const message = error instanceof Error ? error.message : "Upload failed"
+      toast.error("Upload failed", { description: message })
+    }
+  }
+
   const start = () => {
+    if (isLive) {
+      void startLive()
+      return
+    }
     setRunning(true)
     const batchIds: string[] = []
     setFiles((prev) =>
@@ -316,26 +403,21 @@ export function UploadDialog({
                 multiple
                 className="hidden"
                 onChange={(e) => {
-                  const picked = Array.from(e.target.files ?? [])
-                  queue(
-                    picked.map((f) => ({
-                      name: f.name,
-                      type: typeFromName(f.name),
-                      sizeKB: Math.max(1, Math.round(f.size / 1024)),
-                    }))
-                  )
+                  queueRealFiles(Array.from(e.target.files ?? []))
                   e.target.value = ""
                 }}
               />
             </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="self-start"
-              onClick={() => queue(sampleFiles)}
-            >
-              <FilePlus2 /> Add sample files instead
-            </Button>
+            {!isLive && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="self-start"
+                onClick={() => queue(sampleFiles)}
+              >
+                <FilePlus2 /> Add sample files instead
+              </Button>
+            )}
           </>
         )}
 

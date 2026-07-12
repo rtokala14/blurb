@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
 import { AppShell } from "@/components/app-shell";
+import { LiveProvider } from "@/components/live-provider";
 import { ThemeProvider } from "@/components/theme-provider";
 
 const geistSans = Geist({
@@ -39,7 +40,9 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          <AppShell>{children}</AppShell>
+          <LiveProvider>
+            <AppShell>{children}</AppShell>
+          </LiveProvider>
         </ThemeProvider>
       </body>
     </html>

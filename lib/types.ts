@@ -38,6 +38,8 @@ export interface Doc {
   version: number
   /** 0-100, only meaningful while uploading/processing */
   progress?: number
+  /** live mode: media item RID for direct PDF preview */
+  mediaRid?: string | null
 }
 
 export interface DocVersion {
@@ -74,6 +76,12 @@ export interface Citation {
   docId: string
   page: number
   quote: string
+  /** live mode: media item RID behind the citation (ri.mio.…media-item.…) */
+  mediaRid?: string
+  /** live mode: display name from the source tag */
+  docName?: string
+  /** live mode: raw pages string, e.g. "642, 708, 871" */
+  pagesLabel?: string
 }
 
 export type ArtifactKind = "doc" | "sheet" | "deck"
@@ -116,6 +124,17 @@ export interface ChatMessage {
   scopeLabel?: string
   /** marks the message as an edited variant (branch) */
   editedFrom?: string
+  /** live mode: server-reported alternate branch count at this message */
+  alternateBranchCount?: number | null
+  /** live mode: stream error surfaced inline */
+  errorType?: "context_exceeded" | "error"
+}
+
+export interface SessionBranchMeta {
+  id: string
+  name: string
+  isDefault: boolean
+  anchorMessageId: string | null
 }
 
 export interface ChatSession {
@@ -129,6 +148,14 @@ export interface ChatSession {
   /** ids of documents in scope for this session */
   scopeDocIds: string[]
   pinned?: boolean
+  /** live mode: session exists on Foundry */
+  live?: boolean
+  /** live mode: whether the transcript has been fetched */
+  contentLoaded?: boolean
+  foldersAttached?: string[]
+  branches?: SessionBranchMeta[]
+  activeBranchId?: string | null
+  runStatus?: string
 }
 
 /* ------------------------------------------------------------------ */

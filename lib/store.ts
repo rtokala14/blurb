@@ -10,6 +10,11 @@ import {
   seedSessions,
   seedSites,
 } from "@/lib/data"
+import {
+  syncDeleteDoc,
+  syncDeleteSession,
+  syncSessionScope,
+} from "@/lib/live-sync"
 import type {
   ActivityItem,
   Artifact,
@@ -34,9 +39,29 @@ interface OrbitState {
   sites: SharePointSite[]
   activity: ActivityItem[]
 
+  /** null = probing /api/orbit/config; false = demo simulation; true = Foundry */
+  live: boolean | null
+  liveUserEmail: string | null
+
   activeSessionId: string
   /** artifact currently open in the chat-side Studio panel (null = closed) */
   openArtifactId: string | null
+
+  setLive: (live: boolean, userEmail?: string) => void
+  hydrateLive: (data: {
+    docs: Doc[]
+    folders: DocFolder[]
+    sessions: ChatSession[]
+    sites: SharePointSite[]
+  }) => void
+  /** swap a local temp session id for the server-issued rid */
+  replaceSessionId: (oldId: string, newId: string, patch?: Partial<ChatSession>) => void
+  patchSession: (id: string, patch: Partial<ChatSession>) => void
+  setSessionTranscript: (
+    id: string,
+    messages: Record<string, ChatMessage>,
+    leafId: string | null
+  ) => void
 
   /* documents */
   addDoc: (doc: Doc) => void
@@ -82,13 +107,48 @@ export const useOrbit = create<OrbitState>((set) => ({
 
   activeSessionId: seedSessions[0].id,
   openArtifactId: null,
+  live: null,
+  liveUserEmail: null,
+
+  setLive: (live, userEmail) => set({ live, liveUserEmail: userEmail ?? null }),
+  hydrateLive: (data) =>
+    set((s) => ({
+      docs: data.docs,
+      folders: data.folders,
+      sessions: data.sessions,
+      sites: data.sites,
+      activeSessionId:
+        data.sessions.find((x) => x.id === s.activeSessionId)?.id ??
+        data.sessions[0]?.id ??
+        "",
+    })),
+  replaceSessionId: (oldId, newId, patch) =>
+    set((s) => ({
+      sessions: s.sessions.map((x) =>
+        x.id === oldId ? { ...x, ...patch, id: newId } : x
+      ),
+      activeSessionId: s.activeSessionId === oldId ? newId : s.activeSessionId,
+    })),
+  patchSession: (id, patch) =>
+    set((s) => ({
+      sessions: s.sessions.map((x) => (x.id === id ? { ...x, ...patch } : x)),
+    })),
+  setSessionTranscript: (id, messages, leafId) =>
+    set((s) => ({
+      sessions: s.sessions.map((x) =>
+        x.id === id ? { ...x, messages, leafId, contentLoaded: true } : x
+      ),
+    })),
 
   addDoc: (doc) => set((s) => ({ docs: [doc, ...s.docs] })),
   updateDoc: (id, patch) =>
     set((s) => ({
       docs: s.docs.map((d) => (d.id === id ? { ...d, ...patch } : d)),
     })),
-  removeDoc: (id) => set((s) => ({ docs: s.docs.filter((d) => d.id !== id) })),
+  removeDoc: (id) => {
+    syncDeleteDoc(id)
+    set((s) => ({ docs: s.docs.filter((d) => d.id !== id) }))
+  },
   addFolder: (folder) => set((s) => ({ folders: [...s.folders, folder] })),
   renameFolder: (id, name) =>
     set((s) => ({
@@ -131,7 +191,8 @@ export const useOrbit = create<OrbitState>((set) => ({
     set((s) => ({
       sessions: s.sessions.map((x) => (x.id === id ? { ...x, title } : x)),
     })),
-  deleteSession: (id) =>
+  deleteSession: (id) => {
+    syncDeleteSession(id)
     set((s) => {
       const sessions = s.sessions.filter((x) => x.id !== id)
       return {
@@ -141,19 +202,22 @@ export const useOrbit = create<OrbitState>((set) => ({
             ? (sessions[0]?.id ?? "")
             : s.activeSessionId,
       }
-    }),
+    })
+  },
   togglePinSession: (id) =>
     set((s) => ({
       sessions: s.sessions.map((x) =>
         x.id === id ? { ...x, pinned: !x.pinned } : x
       ),
     })),
-  setSessionScope: (id, docIds) =>
+  setSessionScope: (id, docIds) => {
     set((s) => ({
       sessions: s.sessions.map((x) =>
         x.id === id ? { ...x, scopeDocIds: docIds } : x
       ),
-    })),
+    }))
+    syncSessionScope(id, docIds)
+  },
   addMessage: (sessionId, message, setAsLeaf = true) =>
     set((s) => ({
       sessions: s.sessions.map((x) =>

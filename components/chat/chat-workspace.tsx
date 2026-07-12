@@ -20,7 +20,7 @@ import { ExportDialog } from "@/components/chat/export-dialog"
 import { isEditableTarget } from "@/components/keyboard-shortcuts"
 import { Message } from "@/components/chat/message"
 import { TurnsNavigator } from "@/components/chat/turns-navigator"
-import { useChatSimulation } from "@/components/chat/use-chat-simulation"
+import { useChat } from "@/components/chat/use-chat"
 import { StudioPanel } from "@/components/studio/studio-panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -93,7 +93,20 @@ export function ChatWorkspace() {
   const [activeMessageId, setActiveMessageId] = React.useState<string | null>(null)
 
   const scrollRef = React.useRef<HTMLDivElement>(null)
-  const sim = useChatSimulation(session?.id ?? "")
+  const sim = useChat(session?.id ?? "")
+
+  /* live sessions: lazily fetch the transcript when opened */
+  const loadContent = sim.loadContent
+  React.useEffect(() => {
+    if (
+      session?.live &&
+      !session.contentLoaded &&
+      !sim.isBusy &&
+      loadContent
+    ) {
+      void loadContent(session.id)
+    }
+  }, [session?.id, session?.live, session?.contentLoaded, sim.isBusy, loadContent])
 
   const path = session ? activePath(session) : []
   const branches = session ? countBranches(session) : 1
@@ -408,6 +421,7 @@ export function ChatWorkspace() {
               onStop={sim.stop}
               onOpenContext={() => setContextOpen((v) => !v)}
               contextOpen={contextOpen}
+              live={sim.live}
             />
           </div>
         </ResizablePanel>
