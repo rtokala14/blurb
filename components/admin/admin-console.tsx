@@ -155,7 +155,7 @@ export function AdminConsole() {
   )
 
   return (
-    <div className="mx-auto flex h-full max-w-6xl flex-col gap-4 overflow-y-auto p-6">
+    <div className="flex h-full w-full flex-col gap-4 overflow-y-auto p-6">
       <div className="flex flex-wrap items-center gap-3">
         <div className="mr-auto">
           <h1 className="text-xl font-semibold">Admin console</h1>
