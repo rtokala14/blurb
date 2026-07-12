@@ -1,5 +1,19 @@
 # Handoff — continue here in the allowlisted session
 
+> **STATUS UPDATE (2026-07-12, live-verified session):** Steps 0–2 are DONE.
+> Egress to the tenant works; `scripts/foundry-smoke.mjs` passes 10/10 live
+> (OAuth, docs joined with OrbitDocIndexStatus — 19,236 docs / 18,391
+> indexed — sessions, streamed agent turn with citations, session trace with
+> tool calls, citation PDF fetch). The app ran live end-to-end: chat with
+> streamed cited replies, high-level thinking traces (new `/trace` route),
+> corpus-wide document search, edit-and-branch. Cold bootstrap optimized
+> ~8s → 0.76s realistic / 2.3s true-cold. Key correction baked in
+> everywhere: **isIndexed comes from the OrbitDocIndexStatus object
+> (isIndexingComplete), not the doc row's isIndexed property** — that
+> property is stale on virtually the whole tenant. Remaining untested live:
+> the upload path (known gaps 1–3 below). Remind the user to rotate the
+> shared CLIENT_SECRET.
+
 You're picking up **Orbit Docs**, a Next.js 16 + Bun app: a Jacobs-branded
 "enterprise document intelligence" UI that talks to **Palantir Foundry** over
 plain REST (no `docai_sdk`). Branch: `claude/orbit-docs-ui-ux-yxxy6g`. Everything
