@@ -202,6 +202,15 @@ export const liveApi = {
     apiJson<{ status: string; error: string | null }>(
       `/api/orbit/sessions/${encodeURIComponent(rid)}/run`
     ),
+  trace: (rid: string, traceId?: string) =>
+    apiJson<{
+      status: string
+      steps: { id: string; kind: "search" | "read" | "analyze" | "tool"; label: string; detail?: string }[]
+    }>(
+      `/api/orbit/sessions/${encodeURIComponent(rid)}/trace${
+        traceId ? `?traceId=${encodeURIComponent(traceId)}` : ""
+      }`
+    ),
   createBranch: (rid: string, anchorMessageId: string, name?: string) =>
     apiJson<{ activeBranchId: string; branch: LiveBranch }>(
       `/api/orbit/sessions/${encodeURIComponent(rid)}/branches`,

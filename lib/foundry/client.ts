@@ -314,7 +314,10 @@ export async function getSessionTrace(
   agentRid: string,
   sessionRid: string,
   traceId: string
-): Promise<{ status?: string } | null> {
+): Promise<
+  | ({ status?: string } & import("./turn").RawSessionTrace)
+  | null
+> {
   try {
     return await foundryJson(
       `/api/v2/aipAgents/agents/${agentRid}/sessions/${sessionRid}/sessionTraces/${traceId}`,

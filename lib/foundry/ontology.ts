@@ -6,6 +6,7 @@ import {
   getObject,
   getObjectsByIds,
   searchObjects,
+  searchObjectsPage,
 } from "./client"
 import { getFoundryConfig } from "./config"
 import { normalizeMode } from "./turn"
@@ -183,9 +184,12 @@ export async function getAccessibleFolders(userEmail: string): Promise<FolderRow
       const [owned, shared] = await Promise.all([
         searchObjects<FolderRow>("OrbitFolders", {
           where: { type: "eq", field: "createdBy", value: user },
+          // thousands of sync-managed folders on the real tenant — one page
+          pageSize: 10_000,
         }),
         searchObjects<FolderRow>("OrbitFolders", {
           where: { type: "contains", field: "accessEmails", value: user },
+          pageSize: 10_000,
         }),
       ])
       const seen = new Set<string>()
@@ -205,7 +209,8 @@ export async function getAccessibleFolders(userEmail: string): Promise<FolderRow
 
 const indexStatusCache = memoTTL(CACHE_TTL_MS, async () => {
   const rows = await searchObjects<IndexStatusRow>("OrbitDocIndexStatus", {
-    pageSize: 2000,
+    // ~21k rows on the real tenant — max page size keeps this to 3 round trips
+    pageSize: 10_000,
     maxItems: 50_000,
     // Project only what serializeDoc needs — the reference/media columns on
     // this object are large and never used here.
@@ -236,16 +241,46 @@ export interface ListDocsResult {
   indexStatus: Map<string, IndexStatusRow>
 }
 
-/** Owned docs + docs shared via accessible folders (PoC /api/docs). */
+/** Columns serializeDoc needs — projected so the 19k-row doc table never
+ * ships unused properties. */
+const DOC_LIST_FIELDS = [
+  "primaryKey_",
+  "documentName",
+  "addedBy",
+  "isActive",
+  "isIndexed",
+  "createdAt",
+  "noPages",
+  "reference",
+  "sourceType",
+  "sourceSyncConfigPk",
+  "sourceWebUrl",
+  "vlm",
+]
+
+/** PoC /api/docs default response cap. */
+const DOC_LIST_LIMIT = 200
+
+/**
+ * Owned docs + docs shared via accessible folders (PoC /api/docs).
+ *
+ * The PoC full-scans the doc table and slices to `limit` after sorting;
+ * against the real tenant (~19k active docs for one user) that is dozens of
+ * pages per request. We push the sort + cap upstream instead: one
+ * `orderBy createdAt desc` page of `limit` rows (verified live).
+ */
 export async function listAccessibleDocs(
   userEmail: string,
-  { includeSynced = true }: { includeSynced?: boolean } = {}
+  {
+    includeSynced = true,
+    limit = DOC_LIST_LIMIT,
+  }: { includeSynced?: boolean; limit?: number } = {}
 ): Promise<ListDocsResult> {
   const user = normalizeEmail(userEmail)
-  const [folders, indexStatus, ownedDocs] = await Promise.all([
+  const [folders, indexStatus, ownedPage] = await Promise.all([
     getAccessibleFolders(user),
     getIndexStatusMap(),
-    searchObjects<DocRow>("OrbitDocsList", {
+    searchObjectsPage<DocRow>("OrbitDocsList", {
       where: {
         type: "and",
         value: [
@@ -253,9 +288,12 @@ export async function listAccessibleDocs(
           { type: "eq", field: "isActive", value: true },
         ],
       },
-      pageSize: 1000,
+      orderBy: { fields: [{ field: "createdAt", direction: "desc" }] },
+      select: DOC_LIST_FIELDS,
+      pageSize: limit,
     }),
   ])
+  const ownedDocs = ownedPage.data
 
   const sharedFolderNames = new Map<string, string[]>()
   const folderDocIds = new Set<string>()
@@ -288,6 +326,8 @@ export async function listAccessibleDocs(
     docs = docs.filter((d) => !(d.sourceType ?? "").trim())
   }
   docs.sort((a, b) => byCreatedAt(b, a))
+  // Re-cap after merging folder-shared docs (PoC sorts then slices to limit).
+  docs = docs.slice(0, limit)
   return { docs, sharedFolderNames, folders, indexStatus }
 }
 
@@ -795,7 +835,9 @@ export function serializeDoc(
       sharedFolderNames.has(id),
     sharedFolderNames: sharedFolderNames.get(id) ?? [],
     createdAt: doc.createdAt ?? null,
-    noPages: status?.noPages ?? doc.noPages ?? null,
+    // PoC precedence: the doc row's own page count wins; the index-status
+    // row only fills in when the doc predates page counting.
+    noPages: doc.noPages ?? status?.noPages ?? null,
     indexStatus: status
       ? {
           isIndexingComplete: Boolean(status.isIndexingComplete),

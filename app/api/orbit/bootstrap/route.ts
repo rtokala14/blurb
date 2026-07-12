@@ -35,7 +35,13 @@ export async function GET() {
           userEmail,
         })
       ),
-      folders: docsResult.folders.map(serializeFolder),
+      // Sync-managed folders stay in the access map (doc visibility) but are
+      // hidden from the UI list — PoC /api/folders semantics. On the real
+      // tenant this is the difference between ~40 and ~4,400 folders.
+      folders: docsResult.folders
+        .filter((f) => !f.isSyncManaged)
+        .sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""))
+        .map(serializeFolder),
       sessions: sessions.map((s) => serializeSession(s)),
       syncSources: syncSources.map(serializeSyncSource),
     })

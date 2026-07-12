@@ -196,6 +196,88 @@ export function prepareTurnRequest({
 }
 
 /* ------------------------------------------------------------------ */
+/* Thinking-trace summarization (high-level only)                       */
+/* ------------------------------------------------------------------ */
+
+/** Raw AIP SessionTrace shape (platform openapi AipAgents.SessionTrace). */
+export interface RawSessionTrace {
+  id?: string
+  status?: string
+  toolCallGroups?: {
+    toolCalls?: {
+      toolMetadata?: { name?: string; type?: string }
+      input?: { thought?: string; inputs?: Record<string, unknown> }
+      output?: unknown
+    }[]
+  }[]
+}
+
+export interface TraceStep {
+  id: string
+  kind: "search" | "read" | "analyze" | "tool"
+  label: string
+  detail?: string
+}
+
+const THOUGHT_LIMIT = 160
+
+function traceKindFor(toolName: string): TraceStep["kind"] {
+  const name = toolName.toLowerCase()
+  if (name.includes("query") || name.includes("search") || name.includes("semantic")) {
+    return "search"
+  }
+  if (name.includes("document") || name.includes("retriev") || name.includes("media")) {
+    return "read"
+  }
+  if (name.includes("calc") || name.includes("code") || name.includes("transform")) {
+    return "analyze"
+  }
+  return "tool"
+}
+
+function cleanThought(thought: string | undefined): string | undefined {
+  const text = (thought ?? "").replace(/\s+/g, " ").trim()
+  if (!text) return undefined
+  return text.length > THOUGHT_LIMIT ? `${text.slice(0, THOUGHT_LIMIT - 1)}…` : text
+}
+
+/**
+ * Collapse a raw AIP session trace into high-level steps for the thinking
+ * indicator. Deliberately surfaces ONLY the tool name and the agent's own
+ * one-line "thought" — never tool inputs/outputs (individual fetches, RIDs,
+ * query payloads). Consecutive calls to the same tool collapse into one step
+ * with a ×N counter.
+ */
+export function summarizeTrace(trace: RawSessionTrace | null | undefined): TraceStep[] {
+  if (!trace?.toolCallGroups) return []
+  const steps: TraceStep[] = []
+  let previous: { name: string; count: number; step: TraceStep } | null = null
+
+  for (const group of trace.toolCallGroups) {
+    for (const call of group.toolCalls ?? []) {
+      const name = (call.toolMetadata?.name ?? "").trim() || "Working"
+      const detail = cleanThought(call.input?.thought)
+      if (previous && previous.name === name) {
+        previous.count += 1
+        previous.step.label = `${name} ×${previous.count}`
+        // keep the most recent thought as the step detail
+        if (detail) previous.step.detail = detail
+        continue
+      }
+      const step: TraceStep = {
+        id: `trace-${steps.length}`,
+        kind: traceKindFor(name),
+        label: name,
+        ...(detail ? { detail } : {}),
+      }
+      steps.push(step)
+      previous = { name, count: 1, step }
+    }
+  }
+  return steps
+}
+
+/* ------------------------------------------------------------------ */
 /* Stream error sentinel (matches PoC protocol)                         */
 /* ------------------------------------------------------------------ */
 

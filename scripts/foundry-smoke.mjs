@@ -9,11 +9,15 @@
  * It exercises the exact REST surface the app uses, with no Next.js server
  * needed:
  *   1. OAuth2 client-credentials token
- *   2. list the user's OrbitDocsList documents (bootstrap slice)
+ *   2. list the user's OrbitDocsList documents joined with the authoritative
+ *      OrbitDocIndexStatus rows (isIndexingComplete wins over the stale
+ *      isIndexed property on the doc row)
  *   3. list the user's OrbitDocsUserSessions
  *   4. create a session + one agent turn (streamingContinue), printing the
  *      streamed markdown and any <source> citations
- *   5. fetch the first citation's media item (PDF bytes) to prove citation
+ *   5. fetch the session trace and summarize its toolCallGroups (the
+ *      high-level thinking steps the app shows)
+ *   6. fetch the first citation's media item (PDF bytes) to prove citation
  *      previews resolve
  *
  * Credentials are read from the environment first, then .env.local:
@@ -124,16 +128,24 @@ function api(token) {
   }
 }
 
-async function searchObjects(call, objectType, where, select, pageSize = 50) {
-  const body = { pageSize }
-  if (where) body.where = where
-  if (select) body.select = select
-  const res = await call(
-    `/api/v2/ontologies/${CFG.ontology}/objects/${objectType}/search`,
-    { method: "POST", body: JSON.stringify(body) }
-  )
-  if (!res.ok) throw new Error(`${objectType} search ${res.status}: ${(await res.text()).slice(0, 200)}`)
-  return (await res.json()).data || []
+async function searchObjects(call, objectType, where, select, pageSize = 50, maxItems = 50_000) {
+  const out = []
+  let pageToken
+  do {
+    const body = { pageSize }
+    if (where) body.where = where
+    if (select) body.select = select
+    if (pageToken) body.pageToken = pageToken
+    const res = await call(
+      `/api/v2/ontologies/${CFG.ontology}/objects/${objectType}/search`,
+      { method: "POST", body: JSON.stringify(body) }
+    )
+    if (!res.ok) throw new Error(`${objectType} search ${res.status}: ${(await res.text()).slice(0, 200)}`)
+    const page = await res.json()
+    out.push(...(page.data || []))
+    pageToken = page.nextPageToken
+  } while (pageToken && out.length < maxItems)
+  return out.slice(0, maxItems)
 }
 
 /* ---------- run --------------------------------------------------- */
@@ -156,22 +168,47 @@ async function main() {
   }
   const call = api(token)
 
-  /* 2. documents */
-  section(2, "Documents (OrbitDocsList, addedBy = user, isActive)")
+  /* 2. documents — index status resolved via OrbitDocIndexStatus (the
+     authoritative source, keyed by docKey), NOT the isIndexed property on
+     OrbitDocsList, which is only a stale fallback. Matches the PoC's
+     _build_index_status_map + _build_orbit_doc. */
+  section(2, "Documents (OrbitDocsList ⋈ OrbitDocIndexStatus)")
   let docs = []
   try {
-    docs = await searchObjects(
-      call,
-      "OrbitDocsList",
-      { type: "and", value: [
-        { type: "eq", field: "addedBy", value: CFG.userEmail },
-        { type: "eq", field: "isActive", value: true },
-      ] },
-      ["primaryKey_", "documentName", "isIndexed", "noPages", "reference"],
-      25
+    const [docRows, statusRows] = await Promise.all([
+      searchObjects(
+        call,
+        "OrbitDocsList",
+        { type: "and", value: [
+          { type: "eq", field: "addedBy", value: CFG.userEmail },
+          { type: "eq", field: "isActive", value: true },
+        ] },
+        ["primaryKey_", "documentName", "isIndexed", "noPages", "reference"],
+        1000
+      ),
+      searchObjects(
+        call,
+        "OrbitDocIndexStatus",
+        undefined,
+        ["docKey", "isIndexingComplete", "noPages"],
+        2000
+      ),
+    ])
+    const statusByDocKey = new Map(
+      statusRows.filter((s) => s.docKey).map((s) => [String(s.docKey), s])
     )
-    ok(`fetched ${docs.length} document(s)`)
-    docs.slice(0, 5).forEach((d) =>
+    docs = docRows.map((d) => {
+      const status = statusByDocKey.get(String(d.primaryKey_ ?? d.__primaryKey))
+      return {
+        ...d,
+        isIndexed: status?.isIndexingComplete ?? Boolean(d.isIndexed),
+        noPages: d.noPages ?? status?.noPages ?? null,
+      }
+    })
+    ok(`fetched ${docs.length} document(s), ${statusRows.length} index-status row(s)`)
+    const indexed = docs.filter((d) => d.isIndexed)
+    ok(`${indexed.length} indexed via OrbitDocIndexStatus join`)
+    indexed.slice(0, 5).forEach((d) =>
       console.log(`      - ${d.documentName} (indexed=${d.isIndexed}, pages=${d.noPages ?? "?"})`)
     )
   } catch (e) {
@@ -227,6 +264,8 @@ async function main() {
       }
       const prompt =
         "In one or two sentences, what is the single most important thing in these documents? Cite your sources."
+      const traceId = crypto.randomUUID()
+      globalThis.__traceRef = { agentRid: CFG.primaryAgent, sessionRid: aip.rid, traceId }
       const streamRes = await call(
         `/api/v2/aipAgents/agents/${CFG.primaryAgent}/sessions/${aip.rid}/streamingContinue`,
         {
@@ -236,7 +275,7 @@ async function main() {
           body: JSON.stringify({
             userInput: { text: prompt },
             messageId: crypto.randomUUID(),
-            sessionTraceId: crypto.randomUUID(),
+            sessionTraceId: traceId,
             parameterInputs,
           }),
         }
@@ -272,8 +311,36 @@ async function main() {
     }
   }
 
-  /* 5. citation media fetch */
-  section(5, "Citation media fetch (media set item content)")
+  /* 5. thinking trace (high-level summary of tool calls) */
+  section(5, "Session trace (toolCallGroups → high-level steps)")
+  const traceRef = globalThis.__traceRef
+  if (!traceRef) {
+    console.log("      skipped: no agent turn ran")
+  } else {
+    try {
+      const res = await call(
+        `/api/v2/aipAgents/agents/${traceRef.agentRid}/sessions/${traceRef.sessionRid}/sessionTraces/${traceRef.traceId}`,
+        { searchParams: { preview: "true" } }
+      )
+      if (!res.ok) throw new Error(`trace ${res.status}: ${(await res.text()).slice(0, 200)}`)
+      const trace = await res.json()
+      ok(`trace status ${trace.status}`)
+      const groups = trace.toolCallGroups ?? []
+      const labels = groups.flatMap((g) =>
+        (g.toolCalls ?? []).map((c) => c.toolMetadata?.name || "Working")
+      )
+      if (labels.length > 0) {
+        ok(`${labels.length} tool call(s): ${[...new Set(labels)].join(", ")}`)
+      } else {
+        console.log("      (no tool calls recorded in this trace — that's fine)")
+      }
+    } catch (e) {
+      bad(`trace fetch failed: ${e.message}`)
+    }
+  }
+
+  /* 6. citation media fetch */
+  section(6, "Citation media fetch (media set item content)")
   const citationId = globalThis.__firstCitationId
   if (!citationId) {
     console.log("      skipped: no citation media RID from step 4")

@@ -91,8 +91,26 @@ describe("serializeDoc", () => {
       userEmail: "rohit.tokala@jacobs.com",
     })
     expect(serialized.isIndexed).toBe(true)
-    expect(serialized.noPages).toBe(42)
+    // PoC precedence: the doc row's own page count wins over index status.
+    expect(serialized.noPages).toBe(10)
     expect(serialized.addedBy).toBe("rohit.tokala@jacobs.com")
+  })
+
+  test("falls back to index-status pages when the doc has none", () => {
+    const doc: DocRow = {
+      __primaryKey: "d1",
+      documentName: "MSA.pdf",
+      addedBy: "rohit.tokala@jacobs.com",
+      isActive: true,
+    }
+    const serialized = serializeDoc(doc, {
+      sharedFolderNames: new Map(),
+      indexStatus: new Map([
+        ["d1", { __primaryKey: "s1", isIndexingComplete: true, noPages: 42 }],
+      ]),
+      userEmail: "rohit.tokala@jacobs.com",
+    })
+    expect(serialized.noPages).toBe(42)
   })
 
   test("flags shared-from-folder for other owners", () => {

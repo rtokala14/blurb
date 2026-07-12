@@ -9,6 +9,7 @@ import {
   parseStreamError,
   prepareTurnRequest,
   STREAM_ERROR_PREFIX,
+  summarizeTrace,
   THINKING_MODE,
   wrapRegularModePrompt,
 } from "@/lib/foundry/turn"
@@ -154,6 +155,92 @@ describe("prepareTurnRequest", () => {
       pinnedAgentVersion: "9.9",
     })
     expect(different.agentVersion).toBeNull()
+  })
+})
+
+describe("summarizeTrace", () => {
+  test("maps tool calls to high-level steps with thoughts", () => {
+    const steps = summarizeTrace({
+      status: "IN_PROGRESS",
+      toolCallGroups: [
+        {
+          toolCalls: [
+            {
+              toolMetadata: { name: "Object Query Tool", type: "FUNCTION" },
+              input: {
+                thought: "I need to find the relevant contracts.",
+                inputs: { secretRid: "ri.should.never.leak" },
+              },
+              output: { type: "success", output: { raw: "ri.leaky.output" } },
+            },
+          ],
+        },
+        {
+          toolCalls: [
+            {
+              toolMetadata: { name: "Document Retrieval", type: "FUNCTION" },
+              input: { thought: "Fetching pages 4-9." },
+            },
+          ],
+        },
+      ],
+    })
+    expect(steps).toHaveLength(2)
+    expect(steps[0].kind).toBe("search")
+    expect(steps[0].label).toBe("Object Query Tool")
+    expect(steps[0].detail).toBe("I need to find the relevant contracts.")
+    expect(steps[1].kind).toBe("read")
+    // raw tool inputs/outputs must never appear anywhere in the summary
+    expect(JSON.stringify(steps)).not.toContain("ri.should.never.leak")
+    expect(JSON.stringify(steps)).not.toContain("ri.leaky.output")
+  })
+
+  test("collapses consecutive calls to the same tool with a counter", () => {
+    const call = (thought: string) => ({
+      toolMetadata: { name: "Semantic Search", type: "FUNCTION" },
+      input: { thought },
+    })
+    const steps = summarizeTrace({
+      toolCallGroups: [
+        { toolCalls: [call("first pass"), call("second pass")] },
+        { toolCalls: [call("third pass")] },
+      ],
+    })
+    expect(steps).toHaveLength(1)
+    expect(steps[0].label).toBe("Semantic Search ×3")
+    expect(steps[0].detail).toBe("third pass")
+  })
+
+  test("truncates long thoughts and normalizes whitespace", () => {
+    const steps = summarizeTrace({
+      toolCallGroups: [
+        {
+          toolCalls: [
+            {
+              toolMetadata: { name: "Tool" },
+              input: { thought: `a  b\n\nc ${"x".repeat(400)}` },
+            },
+          ],
+        },
+      ],
+    })
+    expect(steps[0].detail!.length).toBeLessThanOrEqual(160)
+    expect(steps[0].detail).toContain("a b c")
+    expect(steps[0].detail!.endsWith("…")).toBe(true)
+  })
+
+  test("empty for missing or empty traces", () => {
+    expect(summarizeTrace(null)).toEqual([])
+    expect(summarizeTrace({ status: "COMPLETE" })).toEqual([])
+    expect(summarizeTrace({ toolCallGroups: [] })).toEqual([])
+  })
+
+  test("unnamed tools get a generic label", () => {
+    const steps = summarizeTrace({
+      toolCallGroups: [{ toolCalls: [{ input: { thought: "hmm" } }] }],
+    })
+    expect(steps[0].label).toBe("Working")
+    expect(steps[0].kind).toBe("tool")
   })
 })
 

@@ -40,6 +40,40 @@ export function useLiveChat(sessionId: string) {
     }
   }, [])
 
+  /**
+   * Poll the high-level thinking trace while a turn is in flight. The server
+   * only ever returns tool labels + the agent's one-line thought — never raw
+   * tool inputs/outputs — so this is safe to render directly.
+   */
+  const startTracePolling = React.useCallback(
+    (rid: string, assistantMessageId: string, traceId: string) => {
+      let stopped = false
+      let timer: ReturnType<typeof setTimeout> | null = null
+      const tick = async () => {
+        if (stopped) return
+        try {
+          const { steps } = await liveApi.trace(rid, traceId)
+          if (stopped) return
+          if (steps.length > 0) {
+            useOrbit.getState().updateMessage(rid, assistantMessageId, (m) =>
+              // once the reply is streaming/done, leave the message alone
+              m.phase === "thinking" ? { thinking: steps } : {}
+            )
+          }
+        } catch {
+          /* trace polling is best-effort — never surface errors */
+        }
+        if (!stopped) timer = setTimeout(tick, 2000)
+      }
+      timer = setTimeout(tick, 1200)
+      return () => {
+        stopped = true
+        if (timer) clearTimeout(timer)
+      }
+    },
+    []
+  )
+
   /** Poll session metadata until the auto-title lands (bounded). */
   const pollTitle = React.useCallback((rid: string) => {
     let attempts = 0
@@ -131,7 +165,11 @@ export function useLiveChat(sessionId: string) {
       const controller = new AbortController()
       abortRef.current = controller
 
+      const sessionTraceId = crypto.randomUUID()
+      const stopTracePolling = startTracePolling(rid, assistantMessageId, sessionTraceId)
+
       const finish = () => {
+        stopTracePolling()
         setBusyId(null)
         abortRef.current = null
       }
@@ -139,9 +177,15 @@ export function useLiveChat(sessionId: string) {
       try {
         await streamTurn(
           rid,
-          { userInput: text, branchId: session.activeBranchId ?? undefined },
+          {
+            userInput: text,
+            branchId: session.activeBranchId ?? undefined,
+            sessionTraceId,
+          },
           {
             onChunk: (accumulated) => {
+              // reply text is flowing — the thinking phase is over
+              stopTracePolling()
               const parsed = parseStreamingLiveText(accumulated)
               useOrbit.getState().updateMessage(rid, assistantMessageId, {
                 phase: "streaming",
@@ -193,7 +237,7 @@ export function useLiveChat(sessionId: string) {
         finish()
       }
     },
-    [sessionId, loadContent, pollTitle]
+    [sessionId, loadContent, pollTitle, startTracePolling]
   )
 
   const stop = React.useCallback(() => {
