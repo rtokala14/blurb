@@ -2,7 +2,7 @@ import { getObjectsByIds } from "@/lib/foundry/client"
 import {
   foundryUserEmail,
   getAccessibleFolders,
-  getIndexStatusMap,
+  getIndexStatusForDocs,
   normalizeEmail,
   type DocRow,
 } from "@/lib/foundry/ontology"
@@ -24,7 +24,7 @@ export async function POST(request: Request) {
     const user = normalizeEmail(foundryUserEmail())
     const [docs, statusMap, folders] = await Promise.all([
       getObjectsByIds<DocRow>("OrbitDocsList", "primaryKey_", primaryKeys),
-      getIndexStatusMap(),
+      getIndexStatusForDocs(primaryKeys),
       getAccessibleFolders(user),
     ])
     const folderDocIds = new Set<string>()

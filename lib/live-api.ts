@@ -134,6 +134,10 @@ export const liveApi = {
   config: () => apiJson<LiveConfig>("/api/orbit/config"),
   bootstrap: () => apiJson<LiveBootstrap>("/api/orbit/bootstrap"),
   docs: () => apiJson<{ data: LiveDocument[] }>("/api/orbit/docs"),
+  searchDocs: (q: string, limit = 50) =>
+    apiJson<{ data: LiveDocument[] }>(
+      `/api/orbit/docs?q=${encodeURIComponent(q)}&limit=${limit}`
+    ),
   docStatuses: (primaryKeys: string[]) =>
     apiJson<{
       data: { primaryKey: string; isIndexed: boolean; noPages: number | null }[]

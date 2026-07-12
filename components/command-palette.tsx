@@ -18,6 +18,7 @@ import {
 import { useTheme } from "next-themes"
 
 import { DocIcon } from "@/components/doc-icon"
+import { adoptSearchResult, useLiveDocSearch } from "@/hooks/use-live-doc-search"
 import {
   CommandDialog,
   CommandEmpty,
@@ -44,6 +45,11 @@ export function CommandPalette({
   const setActiveSession = useOrbit((s) => s.setActiveSession)
   const createSession = useOrbit((s) => s.createSession)
 
+  const [search, setSearch] = React.useState("")
+  // Corpus-wide matches from Foundry (live mode) — the local store only
+  // holds the newest page of documents.
+  const { results: serverHits } = useLiveDocSearch(search)
+
   const run = React.useCallback(
     (fn: () => void) => {
       onOpenChange(false)
@@ -59,7 +65,11 @@ export function CommandPalette({
       title="Command palette"
       description="Search documents, sessions, and actions"
     >
-      <CommandInput placeholder="Search documents, sessions, actions…" />
+      <CommandInput
+        placeholder="Search documents, sessions, actions…"
+        value={search}
+        onValueChange={setSearch}
+      />
       <CommandList>
         <CommandEmpty>No results found.</CommandEmpty>
         <CommandGroup heading="Actions">
@@ -147,6 +157,30 @@ export function CommandPalette({
             </CommandItem>
           ))}
         </CommandGroup>
+        {serverHits.length > 0 && (
+          <>
+            <CommandSeparator />
+            <CommandGroup heading="All documents (Foundry)">
+              {serverHits.slice(0, 8).map((doc) => (
+                <CommandItem
+                  key={doc.id}
+                  // include the raw query so cmdk's client filter keeps
+                  // these async results visible
+                  value={`docsearch ${search} ${doc.name}`}
+                  onSelect={() =>
+                    run(() => {
+                      adoptSearchResult(doc)
+                      router.push(`/documents?doc=${doc.id}`)
+                    })
+                  }
+                >
+                  <DocIcon type={doc.type} />
+                  <span className="truncate">{doc.name}</span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </>
+        )}
         <CommandSeparator />
         <CommandGroup heading="Theme">
           <CommandItem onSelect={() => run(() => setTheme("light"))}>

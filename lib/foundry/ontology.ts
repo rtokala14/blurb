@@ -5,6 +5,7 @@ import {
   extractCreatedPrimaryKey,
   getObject,
   getObjectsByIds,
+  IN_FILTER_CHUNK,
   searchObjects,
   searchObjectsPage,
 } from "./client"
@@ -153,12 +154,19 @@ function byCreatedAt<T extends { createdAt?: string; __primaryKey: string }>(
  * /docs/status bursts (which all touch the same two full-scans) into one
  * upstream query each — the dominant latency win, mirroring the PoC's 5s
  * in-process caches.
+ *
+ * With `staleMs` set it also serves stale-while-revalidate: a value older
+ * than ttlMs but younger than staleMs is returned immediately while a
+ * background refresh runs, so idle-expired requests skip the upstream wait.
  */
-function memoTTL<T>(ttlMs: number, load: () => Promise<T>) {
+function memoTTL<T>(
+  ttlMs: number,
+  load: () => Promise<T>,
+  { staleMs = 0 }: { staleMs?: number } = {}
+) {
   let value: { at: number; data: T } | null = null
   let inFlight: Promise<T> | null = null
-  return async (): Promise<T> => {
-    if (value && Date.now() - value.at < ttlMs) return value.data
+  const refresh = () => {
     if (inFlight) return inFlight
     inFlight = load()
       .then((data) => {
@@ -170,11 +178,34 @@ function memoTTL<T>(ttlMs: number, load: () => Promise<T>) {
       })
     return inFlight
   }
+  const fn = async (): Promise<T> => {
+    const age = value ? Date.now() - value.at : Infinity
+    if (value && age < ttlMs) return value.data
+    if (value && age < staleMs) {
+      void refresh().catch(() => undefined)
+      return value.data
+    }
+    return refresh()
+  }
+  fn.invalidate = () => {
+    value = null
+  }
+  return fn
 }
 
 const CACHE_TTL_MS = 5_000
+/** Folder membership changes rarely; serve stale up to 10 min while refreshing. */
+const FOLDER_STALE_MS = 10 * 60_000
 
-const folderCacheByUser = new Map<string, () => Promise<FolderRow[]>>()
+const folderCacheByUser = new Map<
+  string,
+  ReturnType<typeof memoTTL<FolderRow[]>>
+>()
+
+/** Bust folder caches after any folder mutation. */
+export function invalidateFolderCache(): void {
+  for (const loader of folderCacheByUser.values()) loader.invalidate()
+}
 
 export async function getAccessibleFolders(userEmail: string): Promise<FolderRow[]> {
   const user = normalizeEmail(userEmail)
@@ -201,36 +232,89 @@ export async function getAccessibleFolders(userEmail: string): Promise<FolderRow
         folders.push(folder)
       }
       return folders
-    })
+    }, { staleMs: FOLDER_STALE_MS })
     folderCacheByUser.set(user, loader)
   }
   return loader()
 }
 
-const indexStatusCache = memoTTL(CACHE_TTL_MS, async () => {
-  const rows = await searchObjects<IndexStatusRow>("OrbitDocIndexStatus", {
-    // ~21k rows on the real tenant — max page size keeps this to 3 round trips
-    pageSize: 10_000,
-    maxItems: 50_000,
-    // Project only what serializeDoc needs — the reference/media columns on
-    // this object are large and never used here.
-    select: [
-      "docKey",
-      "isIndexingComplete",
-      "embeddingCount",
-      "lastUpdated",
-      "noPages",
-    ],
-  })
-  const map = new Map<string, IndexStatusRow>()
-  for (const row of rows) {
-    if (row.docKey) map.set(String(row.docKey), row)
-  }
-  return map
-})
+const INDEX_STATUS_FIELDS = [
+  "docKey",
+  "isIndexingComplete",
+  "embeddingCount",
+  "lastUpdated",
+  "noPages",
+]
 
-export function getIndexStatusMap(): Promise<Map<string, IndexStatusRow>> {
-  return indexStatusCache()
+/** doc pk -> {fetchedAt, row|null}; null caches "no status row exists". */
+const indexStatusByDoc = new Map<
+  string,
+  { at: number; row: IndexStatusRow | null }
+>()
+/** doc pk -> in-flight batch fetch covering it (collapses request bursts). */
+const indexStatusInFlight = new Map<string, Promise<void>>()
+
+/**
+ * Index status for a specific set of documents via chunked `in` filters on
+ * docKey (verified live: 100 keys ≈ 220 ms). Replaces the PoC's full-table
+ * scan, which on the real tenant is ~21k rows / multiple seconds. Rows are
+ * cached per doc for CACHE_TTL_MS so the bootstrap + docs + status-poll
+ * burst still collapses into one upstream query per doc set.
+ */
+export async function getIndexStatusForDocs(
+  docIds: string[]
+): Promise<Map<string, IndexStatusRow>> {
+  const unique = [...new Set(docIds.map(String).filter(Boolean))]
+  const now = Date.now()
+  const missing: string[] = []
+  const waits: Promise<void>[] = []
+  for (const id of unique) {
+    const cached = indexStatusByDoc.get(id)
+    if (cached && now - cached.at < CACHE_TTL_MS) continue
+    const inFlight = indexStatusInFlight.get(id)
+    if (inFlight) waits.push(inFlight)
+    else missing.push(id)
+  }
+
+  if (missing.length > 0) {
+    const chunks: string[][] = []
+    for (let i = 0; i < missing.length; i += IN_FILTER_CHUNK) {
+      chunks.push(missing.slice(i, i + IN_FILTER_CHUNK))
+    }
+    const fetchAll = (async () => {
+      const pages = await Promise.all(
+        chunks.map((chunk) =>
+          searchObjects<IndexStatusRow>("OrbitDocIndexStatus", {
+            where: { type: "in", field: "docKey", value: chunk },
+            select: INDEX_STATUS_FIELDS,
+          })
+        )
+      )
+      const at = Date.now()
+      const found = new Set<string>()
+      for (const row of pages.flat()) {
+        if (!row.docKey) continue
+        const key = String(row.docKey)
+        indexStatusByDoc.set(key, { at, row })
+        found.add(key)
+      }
+      for (const id of missing) {
+        if (!found.has(id)) indexStatusByDoc.set(id, { at, row: null })
+      }
+    })().finally(() => {
+      for (const id of missing) indexStatusInFlight.delete(id)
+    })
+    for (const id of missing) indexStatusInFlight.set(id, fetchAll)
+    waits.push(fetchAll)
+  }
+
+  await Promise.all(waits)
+  const result = new Map<string, IndexStatusRow>()
+  for (const id of unique) {
+    const row = indexStatusByDoc.get(id)?.row
+    if (row) result.set(id, row)
+  }
+  return result
 }
 
 export interface ListDocsResult {
@@ -277,23 +361,27 @@ export async function listAccessibleDocs(
   }: { includeSynced?: boolean; limit?: number } = {}
 ): Promise<ListDocsResult> {
   const user = normalizeEmail(userEmail)
-  const [folders, indexStatus, ownedPage] = await Promise.all([
-    getAccessibleFolders(user),
-    getIndexStatusMap(),
-    searchObjectsPage<DocRow>("OrbitDocsList", {
-      where: {
-        type: "and",
-        value: [
-          { type: "eq", field: "addedBy", value: user },
-          { type: "eq", field: "isActive", value: true },
-        ],
-      },
-      orderBy: { fields: [{ field: "createdAt", direction: "desc" }] },
-      select: DOC_LIST_FIELDS,
-      pageSize: limit,
-    }),
-  ])
+  const foldersPromise = getAccessibleFolders(user)
+  const ownedPage = await searchObjectsPage<DocRow>("OrbitDocsList", {
+    where: {
+      type: "and",
+      value: [
+        { type: "eq", field: "addedBy", value: user },
+        { type: "eq", field: "isActive", value: true },
+      ],
+    },
+    orderBy: { fields: [{ field: "createdAt", direction: "desc" }] },
+    select: DOC_LIST_FIELDS,
+    pageSize: limit,
+  })
   const ownedDocs = ownedPage.data
+  // Warm the per-doc status cache while the (slower) folder scan finishes —
+  // the final getIndexStatusForDocs below then only fetches folder-shared
+  // stragglers.
+  const ownedStatusWarm = getIndexStatusForDocs(ownedDocs.map(pk)).catch(
+    () => undefined
+  )
+  const folders = await foldersPromise
 
   const sharedFolderNames = new Map<string, string[]>()
   const folderDocIds = new Set<string>()
@@ -328,11 +416,86 @@ export async function listAccessibleDocs(
   docs.sort((a, b) => byCreatedAt(b, a))
   // Re-cap after merging folder-shared docs (PoC sorts then slices to limit).
   docs = docs.slice(0, limit)
+  // Status only for the docs we actually return — not the whole 21k-row table.
+  await ownedStatusWarm
+  const indexStatus = await getIndexStatusForDocs(docs.map(pk))
   return { docs, sharedFolderNames, folders, indexStatus }
 }
 
 export async function getDoc(pkValue: string): Promise<DocRow | null> {
   return getObject<DocRow>("OrbitDocsList", pkValue)
+}
+
+/**
+ * Server-side document search across the user's WHOLE corpus (~19k docs on
+ * the real tenant), not just the newest page the library holds. Uses the
+ * ontology's `containsAllTerms` text match on documentName (verified live),
+ * pushed upstream with the same access filters as listAccessibleDocs.
+ * Folder-shared docs are matched by substring over the (bounded) shared set.
+ */
+export async function searchAccessibleDocs(
+  userEmail: string,
+  query: string,
+  { limit = 50 }: { limit?: number } = {}
+): Promise<ListDocsResult> {
+  const user = normalizeEmail(userEmail)
+  const q = query.trim()
+  if (!q) return listAccessibleDocs(userEmail, { limit })
+
+  const foldersPromise = getAccessibleFolders(user)
+  const ownedPage = await searchObjectsPage<DocRow>("OrbitDocsList", {
+    where: {
+      type: "and",
+      value: [
+        { type: "eq", field: "addedBy", value: user },
+        { type: "eq", field: "isActive", value: true },
+        { type: "containsAllTerms", field: "documentName", value: q },
+      ],
+    },
+    orderBy: { fields: [{ field: "createdAt", direction: "desc" }] },
+    select: DOC_LIST_FIELDS,
+    pageSize: limit,
+  })
+  const folders = await foldersPromise
+
+  const sharedFolderNames = new Map<string, string[]>()
+  const folderDocIds = new Set<string>()
+  for (const folder of folders) {
+    for (const docId of folder.contents ?? []) {
+      const id = String(docId)
+      folderDocIds.add(id)
+      const names = sharedFolderNames.get(id) ?? []
+      names.push(folder.name ?? "Folder")
+      sharedFolderNames.set(id, names)
+    }
+  }
+
+  const docsById = new Map<string, DocRow>()
+  for (const doc of ownedPage.data) docsById.set(pk(doc), doc)
+
+  // Folder-shared docs can't be term-searched upstream (no addedBy filter
+  // would over-match); fetch the bounded shared set and substring-match.
+  const missingShared = [...folderDocIds].filter((id) => !docsById.has(id))
+  const SHARED_SEARCH_CAP = 500
+  if (missingShared.length > 0 && missingShared.length <= SHARED_SEARCH_CAP) {
+    const shared = await getObjectsByIds<DocRow>(
+      "OrbitDocsList",
+      "primaryKey_",
+      missingShared
+    )
+    const needle = q.toLowerCase()
+    for (const [id, doc] of shared) {
+      if (doc.isActive === false) continue
+      if (!(doc.documentName ?? "").toLowerCase().includes(needle)) continue
+      docsById.set(id, doc)
+    }
+  }
+
+  let docs = [...docsById.values()]
+  docs.sort((a, b) => byCreatedAt(b, a))
+  docs = docs.slice(0, limit)
+  const indexStatus = await getIndexStatusForDocs(docs.map(pk))
+  return { docs, sharedFolderNames, folders, indexStatus }
 }
 
 export async function createDocRow(params: {
@@ -380,6 +543,7 @@ export async function removeDocFromFolders(
     })
     removedFrom.push(folder.name ?? pk(folder))
   }
+  if (removedFrom.length > 0) invalidateFolderCache()
   return removedFrom
 }
 
@@ -407,6 +571,7 @@ export async function createFolder(params: {
     },
     { returnEdits: true }
   )
+  invalidateFolderCache()
   return extractCreatedPrimaryKey(response, "OrbitFolders")
 }
 
@@ -424,10 +589,12 @@ export async function editFolder(
     ...fields,
     updatedAt: now(),
   })
+  invalidateFolderCache()
 }
 
 export async function deleteFolder(folderId: string): Promise<void> {
   await applyAction("delete-orbit-folders", { OrbitFolders: folderId })
+  invalidateFolderCache()
 }
 
 /* ------------------------------------------------------------------ */

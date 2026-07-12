@@ -21,6 +21,7 @@ import { toast } from "sonner"
 
 import { DocIcon, docTypeLabel } from "@/components/doc-icon"
 import { DocPreviewSheet } from "@/components/documents/doc-preview-sheet"
+import { adoptSearchResult, useLiveDocSearch } from "@/hooks/use-live-doc-search"
 import { FolderTree } from "@/components/documents/folder-tree"
 import { UploadDialog } from "@/components/documents/upload-dialog"
 import { Badge } from "@/components/ui/badge"
@@ -154,6 +155,14 @@ export function DocumentsView() {
     return ids
   }, [currentFolderId, folders])
 
+  // Live mode: the store holds only the newest page of the corpus, so a
+  // query also searches the whole ontology server-side. Server hits merge
+  // into the same list (only when browsing the root — folder views stay
+  // local to their contents).
+  const { results: serverHits, searching } = useLiveDocSearch(
+    currentFolderId ? "" : query
+  )
+
   const visible = docs
     .filter((d) => !descendantIds || (d.folderId && descendantIds.has(d.folderId)))
     .filter(
@@ -162,13 +171,17 @@ export function DocumentsView() {
         d.name.toLowerCase().includes(query.toLowerCase()) ||
         d.tags.some((t) => t.includes(query.toLowerCase()))
     )
+    .concat(query && !currentFolderId ? serverHits : [])
     .sort((a, b) => {
       if (sort === "name") return a.name.localeCompare(b.name)
       if (sort === "size") return b.sizeKB - a.sizeKB
       return b.updatedAt.localeCompare(a.updatedAt)
     })
 
-  const previewDoc = docs.find((d) => d.id === previewDocId) ?? null
+  const previewDoc =
+    docs.find((d) => d.id === previewDocId) ??
+    serverHits.find((d) => d.id === previewDocId) ??
+    null
 
   const breadcrumbSegments: { id: string | null; name: string }[] = [
     { id: null, name: "Library" },
@@ -182,6 +195,8 @@ export function DocumentsView() {
   }
 
   const askInChat = (doc: Doc) => {
+    // Server-search hits aren't in the store yet — adopt before scoping.
+    adoptSearchResult(doc)
     createSession([doc.id])
     router.push("/chat")
     toast("New session scoped to this document", { description: doc.name })
@@ -400,11 +415,15 @@ export function DocumentsView() {
                 <EmptyMedia variant="icon">
                   <Search />
                 </EmptyMedia>
-                <EmptyTitle>No documents found</EmptyTitle>
+                <EmptyTitle>
+                  {searching ? "Searching your library…" : "No documents found"}
+                </EmptyTitle>
                 <EmptyDescription>
-                  {query
-                    ? `Nothing matches “${query}” in this folder.`
-                    : "This folder is empty. Upload files or sync a SharePoint site."}
+                  {searching
+                    ? "Checking all documents on Foundry."
+                    : query
+                      ? `Nothing matches “${query}” in this folder.`
+                      : "This folder is empty. Upload files or sync a SharePoint site."}
                 </EmptyDescription>
               </EmptyHeader>
               <Button onClick={() => setUploadOpen(true)}>

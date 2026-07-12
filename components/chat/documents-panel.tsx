@@ -15,6 +15,7 @@ import {
 
 import { DocIcon } from "@/components/doc-icon"
 import { UploadDialog } from "@/components/documents/upload-dialog"
+import { adoptSearchResult, useLiveDocSearch } from "@/hooks/use-live-doc-search"
 import { PdfViewerDialog } from "@/components/pdf-viewer-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -84,6 +85,10 @@ export function DocumentsPanel({
     !query ||
     doc.name.toLowerCase().includes(query.toLowerCase()) ||
     doc.tags.some((t) => t.includes(query.toLowerCase()))
+
+  // Live mode: also search the whole corpus server-side — the store holds
+  // only the newest page of ~19k docs.
+  const { results: serverHits, searching } = useLiveDocSearch(query)
 
   const tokenEstimate = docs
     .filter((d) => selected.has(d.id))
@@ -175,8 +180,24 @@ export function DocumentsPanel({
     )
   }
 
-  const DocRow = ({ doc, depth }: { doc: Doc; depth: number }) => {
+  const DocRow = ({
+    doc,
+    depth,
+    adopt = false,
+  }: {
+    doc: Doc
+    depth: number
+    /** server-search hit: pull it into the store before scoping it */
+    adopt?: boolean
+  }) => {
     const ready = doc.status === "ready"
+    const toggle = () => {
+      if (adopt) adoptSearchResult(doc)
+      const next = new Set(selected)
+      if (next.has(doc.id)) next.delete(doc.id)
+      else next.add(doc.id)
+      setSelected(next)
+    }
     return (
       <div
         className="hover:bg-accent group flex items-center gap-1.5 rounded-md px-1.5 py-1.5"
@@ -185,12 +206,7 @@ export function DocumentsPanel({
         <Checkbox
           checked={selected.has(doc.id)}
           disabled={!ready}
-          onCheckedChange={() => {
-            const next = new Set(selected)
-            if (next.has(doc.id)) next.delete(doc.id)
-            else next.add(doc.id)
-            setSelected(next)
-          }}
+          onCheckedChange={toggle}
         />
         <DocIcon type={doc.type} />
         <button
@@ -200,12 +216,7 @@ export function DocumentsPanel({
           )}
           disabled={!ready}
           title={doc.name}
-          onClick={() => {
-            const next = new Set(selected)
-            if (next.has(doc.id)) next.delete(doc.id)
-            else next.add(doc.id)
-            setSelected(next)
-          }}
+          onClick={toggle}
         >
           {doc.name}
         </button>
@@ -305,9 +316,38 @@ export function DocumentsPanel({
       <div className="thin-scrollbar min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
         <div className="p-1.5">
           {tab === "library" ? (
-            libraryRoots.map((folder) => (
-              <FolderNode key={folder.id} folder={folder} depth={0} />
-            ))
+            <>
+              {libraryRoots.map((folder) => (
+                <FolderNode key={folder.id} folder={folder} depth={0} />
+              ))}
+              {/* uploads that aren't filed in any folder */}
+              {docs
+                .filter(
+                  (d) =>
+                    d.folderId === null &&
+                    d.source !== "sharepoint" &&
+                    matches(d)
+                )
+                .map((doc) => (
+                  <DocRow key={doc.id} doc={doc} depth={0} />
+                ))}
+              {/* corpus-wide matches from Foundry beyond the loaded page */}
+              {searching && (
+                <p className="text-muted-foreground flex items-center gap-1.5 px-2 py-1.5 text-xs">
+                  <Spinner className="size-3" /> Searching all documents…
+                </p>
+              )}
+              {serverHits.length > 0 && (
+                <>
+                  <p className="text-muted-foreground px-2 pt-2 pb-1 text-[10px] font-medium tracking-wide uppercase">
+                    From your full library
+                  </p>
+                  {serverHits.map((doc) => (
+                    <DocRow key={doc.id} doc={doc} depth={0} adopt />
+                  ))}
+                </>
+              )}
+            </>
           ) : (
             <>
               {sites.map((site) => {

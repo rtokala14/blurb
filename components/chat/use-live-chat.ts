@@ -288,6 +288,40 @@ export function useLiveChat(sessionId: string) {
     [sessionId, loadContent]
   )
 
+  /**
+   * Edit a past user message: branch at its parent (the reply before it),
+   * switch to the branch, and send the edited text there. Pure composition
+   * of the existing branches + continue REST surface.
+   */
+  const editAndBranch = React.useCallback(
+    async (message: ChatMessage, newText: string) => {
+      const text = newText.trim()
+      if (!text) return
+      if (!message.parentId) {
+        toast("The first message can't be edited", {
+          description: "Start a new session to ask something different.",
+        })
+        return
+      }
+      try {
+        const result = await liveApi.createBranch(sessionId, message.parentId)
+        useOrbit.getState().patchSession(sessionId, {
+          activeBranchId: result.activeBranchId,
+        })
+        await loadContent(sessionId)
+        await send(text)
+        toast("Branched with your edit", {
+          description: "The previous reply is still available via the branch switcher.",
+        })
+      } catch (error) {
+        toast.error("Couldn't branch the conversation", {
+          description: error instanceof Error ? error.message : undefined,
+        })
+      }
+    },
+    [sessionId, loadContent, send]
+  )
+
   return {
     send,
     stop,
@@ -296,12 +330,7 @@ export function useLiveChat(sessionId: string) {
     loadContent,
     branchFrom,
     activateBranch,
-    /* simulation-only affordances are disabled in live mode */
     regenerate: branchFrom,
-    editAndBranch: () => {
-      toast("Editing past turns isn't supported in live mode", {
-        description: "Branch from the previous reply instead.",
-      })
-    },
+    editAndBranch,
   }
 }

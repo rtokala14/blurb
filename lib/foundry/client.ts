@@ -73,6 +73,9 @@ export type WhereClause =
   | { type: "gte"; field: string; value: unknown }
   | { type: "in"; field: string; value: unknown[] }
   | { type: "contains"; field: string; value: unknown }
+  | { type: "containsAllTerms"; field: string; value: string }
+  | { type: "containsAnyTerm"; field: string; value: string }
+  | { type: "containsAllTermsInOrder"; field: string; value: string }
   | { type: "and"; value: WhereClause[] }
   | { type: "or"; value: WhereClause[] }
   | { type: "not"; value: WhereClause }
@@ -155,19 +158,24 @@ export async function getObjectsByIds<T = Record<string, unknown>>(
 ): Promise<Map<string, T>> {
   const found = new Map<string, T>()
   const unique = [...new Set(ids.filter(Boolean))]
+  const chunks: string[][] = []
   for (let i = 0; i < unique.length; i += IN_FILTER_CHUNK) {
-    const chunk = unique.slice(i, i + IN_FILTER_CHUNK)
-    const rows = await searchObjects<T>(objectType, {
-      where: { type: "in", field: primaryKeyField, value: chunk },
-    })
-    for (const row of rows) {
-      const pk = String(
-        (row as Record<string, unknown>)[primaryKeyField] ??
-          (row as Record<string, unknown>).__primaryKey ??
-          ""
-      )
-      if (pk) found.set(pk, row)
-    }
+    chunks.push(unique.slice(i, i + IN_FILTER_CHUNK))
+  }
+  const pages = await Promise.all(
+    chunks.map((chunk) =>
+      searchObjects<T>(objectType, {
+        where: { type: "in", field: primaryKeyField, value: chunk },
+      })
+    )
+  )
+  for (const row of pages.flat()) {
+    const pk = String(
+      (row as Record<string, unknown>)[primaryKeyField] ??
+        (row as Record<string, unknown>).__primaryKey ??
+        ""
+    )
+    if (pk) found.set(pk, row)
   }
   return found
 }

@@ -1,18 +1,33 @@
 import {
   foundryUserEmail,
   listAccessibleDocs,
+  searchAccessibleDocs,
   serializeDoc,
 } from "@/lib/foundry/ontology"
 import { errorResponse, json, requireLive } from "@/lib/foundry/http"
 
 export const dynamic = "force-dynamic"
 
-export async function GET() {
+/**
+ * Documents list (PoC GET /api/docs). `?q=` runs an ontology-side term
+ * search across the user's whole corpus instead of the newest page.
+ */
+export async function GET(request: Request) {
   const guard = requireLive()
   if (guard) return guard
   try {
     const userEmail = foundryUserEmail()
-    const result = await listAccessibleDocs(userEmail)
+    const url = new URL(request.url)
+    const q = (url.searchParams.get("q") ?? "").trim()
+    const limitParam = Number(url.searchParams.get("limit"))
+    const limit =
+      Number.isFinite(limitParam) && limitParam > 0
+        ? Math.min(limitParam, 500)
+        : undefined
+
+    const result = q
+      ? await searchAccessibleDocs(userEmail, q, { limit: limit ?? 50 })
+      : await listAccessibleDocs(userEmail, limit ? { limit } : {})
     return json({
       data: result.docs.map((doc) =>
         serializeDoc(doc, {
