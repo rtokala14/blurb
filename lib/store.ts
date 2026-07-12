@@ -18,6 +18,7 @@ import {
 import type {
   ActivityItem,
   Artifact,
+  ChatFolder,
   ChatMessage,
   ChatSession,
   Doc,
@@ -53,7 +54,14 @@ interface OrbitState {
     folders: DocFolder[]
     sessions: ChatSession[]
     sites: SharePointSite[]
+    chatFolders?: ChatFolder[]
   }) => void
+
+  /* chat folders (live) */
+  chatFolders: ChatFolder[]
+  addChatFolder: (folder: ChatFolder) => void
+  patchChatFolder: (id: string, patch: Partial<ChatFolder>) => void
+  removeChatFolder: (id: string) => void
   /** swap a local temp session id for the server-issued rid */
   replaceSessionId: (oldId: string, newId: string, patch?: Partial<ChatSession>) => void
   patchSession: (id: string, patch: Partial<ChatSession>) => void
@@ -117,10 +125,32 @@ export const useOrbit = create<OrbitState>((set) => ({
       folders: data.folders,
       sessions: data.sessions,
       sites: data.sites,
+      chatFolders: data.chatFolders ?? [],
       activeSessionId:
         data.sessions.find((x) => x.id === s.activeSessionId)?.id ??
         data.sessions[0]?.id ??
         "",
+    })),
+
+  chatFolders: [],
+  addChatFolder: (folder) =>
+    set((s) => ({
+      chatFolders: [...s.chatFolders, folder].sort((a, b) =>
+        a.name.toLowerCase().localeCompare(b.name.toLowerCase())
+      ),
+    })),
+  patchChatFolder: (id, patch) =>
+    set((s) => ({
+      chatFolders: s.chatFolders
+        .map((f) => (f.id === id ? { ...f, ...patch } : f))
+        .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase())),
+    })),
+  removeChatFolder: (id) =>
+    set((s) => ({
+      chatFolders: s.chatFolders.filter((f) => f.id !== id),
+      sessions: s.sessions.map((x) =>
+        x.chatFolderId === id ? { ...x, chatFolderId: null } : x
+      ),
     })),
   replaceSessionId: (oldId, newId, patch) =>
     set((s) => ({

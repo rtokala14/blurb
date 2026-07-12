@@ -5,6 +5,7 @@ import { toast } from "sonner"
 
 import { liveApi, type LiveBootstrap } from "@/lib/live-api"
 import {
+  mapLiveChatFolder,
   mapLiveDoc,
   mapLiveFolders,
   mapLiveSession,
@@ -27,6 +28,7 @@ export function hydrateFromBootstrap(data: LiveBootstrap) {
     folders: [...folders, ...sync.folders],
     sessions: data.sessions.map(mapLiveSession),
     sites,
+    chatFolders: (data.chatFolders ?? []).map(mapLiveChatFolder),
   })
 }
 

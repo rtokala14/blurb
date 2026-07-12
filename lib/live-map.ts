@@ -10,6 +10,7 @@ import type {
   LiveSyncSource,
 } from "@/lib/live-api"
 import type {
+  ChatFolder,
   ChatMessage,
   ChatSession,
   Citation,
@@ -120,6 +121,21 @@ export function mapLiveSession(session: LiveSession): ChatSession {
     foldersAttached: session.foldersAttached,
     activeBranchId: session.activeBranchId,
     runStatus: session.currentRun.status,
+    chatFolderId: session.chatFolderId,
+  }
+}
+
+export function mapLiveChatFolder(folder: {
+  primaryKey: string
+  name: string
+  color: string | null
+  updatedAt: string | null
+}): ChatFolder {
+  return {
+    id: folder.primaryKey,
+    name: folder.name,
+    color: folder.color,
+    updatedAt: folder.updatedAt,
   }
 }
 

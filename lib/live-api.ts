@@ -105,12 +105,21 @@ export interface LiveSyncSource {
   ownerEmail: string
 }
 
+export interface LiveChatFolder {
+  primaryKey: string
+  name: string
+  color: string | null
+  createdBy: string
+  updatedAt: string | null
+}
+
 export interface LiveBootstrap {
   userEmail: string
   documents: LiveDocument[]
   folders: LiveFolder[]
   sessions: LiveSession[]
   syncSources: LiveSyncSource[]
+  chatFolders?: LiveChatFolder[]
 }
 
 async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -230,6 +239,34 @@ export const liveApi = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+
+  chatFolders: () =>
+    apiJson<{ data: LiveChatFolder[] }>("/api/orbit/chat-folders"),
+  createChatFolder: (body: { name: string; color?: string }) =>
+    apiJson<LiveChatFolder>("/api/orbit/chat-folders", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateChatFolder: (id: string, body: Partial<{ name: string; color: string | null }>) =>
+    apiJson<LiveChatFolder>(`/api/orbit/chat-folders/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  deleteChatFolder: (id: string, deleteSessions: boolean) =>
+    apiJson<{
+      success: boolean
+      affectedSessionCount: number
+      deletedSessionCount: number
+      unfiledSessionCount: number
+    }>(`/api/orbit/chat-folders/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      body: JSON.stringify({ deleteSessions }),
+    }),
+  assignSessionFolder: (sessionId: string, folderId: string | null) =>
+    apiJson<{ success: boolean; folderId: string | null }>(
+      `/api/orbit/sessions/${encodeURIComponent(sessionId)}/folder`,
+      { method: "PUT", body: JSON.stringify({ folderId }) }
+    ),
 
   syncBrowse: (sourceId: string, path: string) =>
     apiJson<SyncBrowseResponse>(

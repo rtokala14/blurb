@@ -114,6 +114,17 @@ export interface BranchRow {
   deletedAt?: string
 }
 
+export interface ChatFolderRow {
+  __primaryKey: string
+  primaryKey_?: string
+  name?: string
+  color?: string
+  createdBy?: string
+  updatedAt?: string
+  isDeleted?: boolean
+  deletedAt?: string
+}
+
 export interface SyncSourceRow {
   __primaryKey: string
   displayName?: string
@@ -856,6 +867,115 @@ export async function sanitizeAttachments(
 
   const scopedDocIds = [...new Set([...sanitizedDocs, ...folderScope])]
   return { docsAttached: sanitizedDocs, foldersAttached: sanitizedFolders, scopedDocIds }
+}
+
+/* ------------------------------------------------------------------ */
+/* Chat folders (session folders — PoC chat_folders.py)                 */
+/* ------------------------------------------------------------------ */
+
+export const CHAT_FOLDER_COLORS = [
+  "slate",
+  "sky",
+  "indigo",
+  "teal",
+  "emerald",
+  "amber",
+  "rose",
+] as const
+
+export function normalizeChatFolderColor(
+  color: string | null | undefined
+): string | null {
+  const normalized = (color ?? "").trim().toLowerCase()
+  if (!normalized) return null
+  if (!(CHAT_FOLDER_COLORS as readonly string[]).includes(normalized)) {
+    throw new Error(
+      `Invalid folder color '${normalized}'. Allowed: ${CHAT_FOLDER_COLORS.join(", ")}`
+    )
+  }
+  return normalized
+}
+
+export async function listChatFolders(userEmail: string): Promise<ChatFolderRow[]> {
+  const rows = await searchObjects<ChatFolderRow>("OrbitChatFolders", {
+    where: { type: "eq", field: "createdBy", value: normalizeEmail(userEmail) },
+    pageSize: 1000,
+  })
+  // isDeleted is nullable — NULL means active, so filter in JS (PoC quirk).
+  return rows
+    .filter((row) => !row.isDeleted)
+    .sort((a, b) => (a.name ?? "").toLowerCase().localeCompare((b.name ?? "").toLowerCase()))
+}
+
+export async function getChatFolder(folderId: string): Promise<ChatFolderRow | null> {
+  const row = await getObject<ChatFolderRow>("OrbitChatFolders", folderId)
+  if (!row || row.isDeleted) return null
+  return row
+}
+
+export async function createChatFolder(params: {
+  name: string
+  color?: string | null
+  createdBy: string
+}): Promise<string> {
+  const response = await applyAction(
+    "create-orbit-chat-folders",
+    {
+      name: params.name.trim(),
+      color: normalizeChatFolderColor(params.color) ?? undefined,
+      createdBy: normalizeEmail(params.createdBy),
+      updatedAt: now(),
+    },
+    { returnEdits: true }
+  )
+  return extractCreatedPrimaryKey(response, "OrbitChatFolders")
+}
+
+/** Full-replay edit (PoC edit_orbit_chat_folders rewrites all params). */
+export async function updateChatFolder(
+  folder: ChatFolderRow,
+  fields: Partial<{ name: string; color: string | null; isDeleted: boolean; deletedAt: string }>
+): Promise<void> {
+  await applyAction("edit-orbit-chat-folders", {
+    OrbitChatFolders: pk(folder),
+    name: fields.name !== undefined ? fields.name.trim() : (folder.name ?? ""),
+    color:
+      fields.color !== undefined
+        ? (normalizeChatFolderColor(fields.color) ?? undefined)
+        : folder.color,
+    createdBy: folder.createdBy,
+    isDeleted: fields.isDeleted ?? Boolean(folder.isDeleted),
+    deletedAt: fields.deletedAt ?? folder.deletedAt,
+    updatedAt: now(),
+  })
+}
+
+export async function softDeleteChatFolder(folder: ChatFolderRow): Promise<void> {
+  await updateChatFolder(folder, { isDeleted: true, deletedAt: now() })
+}
+
+/** Active sessions filed in a chat folder (isDeleted nullable → JS filter). */
+export async function listSessionsInChatFolder(
+  folderId: string
+): Promise<SessionRow[]> {
+  const rows = await searchObjects<SessionRow>("OrbitDocsUserSessions", {
+    where: { type: "eq", field: "chatFolderId", value: folderId },
+    pageSize: 1000,
+    select: ["primaryKey_", "isDeleted", "chatFolderId", "user"],
+  })
+  return rows.filter((row) => !row.isDeleted)
+}
+
+export function serializeChatFolder(row: ChatFolderRow) {
+  return {
+    primaryKey: pk(row),
+    name: row.name ?? "",
+    color: (CHAT_FOLDER_COLORS as readonly string[]).includes(row.color ?? "")
+      ? row.color
+      : null,
+    createdBy: normalizeEmail(row.createdBy),
+    updatedAt: row.updatedAt ?? null,
+  }
 }
 
 /* ------------------------------------------------------------------ */

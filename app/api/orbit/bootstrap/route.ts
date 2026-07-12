@@ -1,8 +1,10 @@
 import {
   foundryUserEmail,
   listAccessibleDocs,
+  listChatFolders,
   listSessions,
   listSyncSources,
+  serializeChatFolder,
   serializeDoc,
   serializeFolder,
   serializeSession,
@@ -21,10 +23,11 @@ export async function GET() {
   if (guard) return guard
   try {
     const userEmail = foundryUserEmail()
-    const [docsResult, sessions, syncSources] = await Promise.all([
+    const [docsResult, sessions, syncSources, chatFolders] = await Promise.all([
       listAccessibleDocs(userEmail),
       listSessions(userEmail),
       listSyncSources(userEmail).catch(() => []),
+      listChatFolders(userEmail).catch(() => []),
     ])
     return json({
       userEmail,
@@ -44,6 +47,7 @@ export async function GET() {
         .map(serializeFolder),
       sessions: sessions.map((s) => serializeSession(s)),
       syncSources: syncSources.map(serializeSyncSource),
+      chatFolders: chatFolders.map(serializeChatFolder),
     })
   } catch (error) {
     return errorResponse(error)

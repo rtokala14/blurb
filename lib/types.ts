@@ -156,6 +156,17 @@ export interface ChatSession {
   branches?: SessionBranchMeta[]
   activeBranchId?: string | null
   runStatus?: string
+  /** live mode: chat folder this session is filed in */
+  chatFolderId?: string | null
+}
+
+/** Private folder for organizing chat sessions (live mode). */
+export interface ChatFolder {
+  id: string
+  name: string
+  /** color token: slate | sky | indigo | teal | emerald | amber | rose */
+  color: string | null
+  updatedAt: string | null
 }
 
 /* ------------------------------------------------------------------ */
