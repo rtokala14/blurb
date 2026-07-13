@@ -22,6 +22,7 @@ import {
   Trash2,
 } from "lucide-react"
 
+import { prefetchSessionContent } from "@/lib/live-session"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import {
   ChatFolderDialog,
@@ -129,6 +130,9 @@ export function AppSidebar() {
         asChild
         isActive={isActive(session)}
         onClick={() => setActiveSession(session.id)}
+        // warm the transcript on hover/focus so opening feels instant
+        onMouseEnter={() => prefetchSessionContent(session.id)}
+        onFocus={() => prefetchSessionContent(session.id)}
         className={cn(inFolder && "h-7 text-[13px]")}
       >
         <Link href="/chat" title={session.title}>

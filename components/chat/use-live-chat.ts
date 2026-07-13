@@ -3,20 +3,13 @@
 import * as React from "react"
 import { toast } from "sonner"
 
-import {
-  chatLineForDoc,
-  deriveDocArtifacts,
-  isDocEnvelopeContent,
-} from "@/lib/docgen/artifacts"
+import { chatLineForDoc, isDocEnvelopeContent } from "@/lib/docgen/artifacts"
 import { parseDocEnvelope, parseStreamingDoc } from "@/lib/docgen/parse"
 import { getDocSkill } from "@/lib/docgen/skills"
 import { liveApi, streamTurn } from "@/lib/live-api"
 import { parseStreamingLiveText, parseLiveMessage } from "@/lib/live-citations"
-import {
-  liveCitationToUi,
-  mapLiveBranch,
-  transcriptToTree,
-} from "@/lib/live-map"
+import { liveCitationToUi } from "@/lib/live-map"
+import { loadSessionContent } from "@/lib/live-session"
 import { uid, useOrbit } from "@/lib/store"
 import type { Artifact, ChatMessage } from "@/lib/types"
 
@@ -32,18 +25,7 @@ export function useLiveChat(sessionId: string) {
   /** Load transcript + branches when a live session is opened. */
   const loadContent = React.useCallback(async (rid: string) => {
     try {
-      const content = await liveApi.content(rid)
-      const tree = transcriptToTree(content.messages)
-      // Envelope-bearing assistant messages become Studio artifacts; their
-      // chat content collapses to a one-line summary + card.
-      const derived = deriveDocArtifacts(rid, tree.messages)
-      const store = useOrbit.getState()
-      store.setSessionTranscript(rid, derived.messages, tree.leafId)
-      store.setSessionArtifacts(rid, derived.artifacts)
-      store.patchSession(rid, {
-        branches: (content.branches ?? []).map(mapLiveBranch),
-        activeBranchId: content.activeBranchId ?? null,
-      })
+      await loadSessionContent(rid)
     } catch (error) {
       toast.error("Couldn't load the session transcript", {
         description: error instanceof Error ? error.message : undefined,

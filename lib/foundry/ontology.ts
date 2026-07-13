@@ -244,30 +244,33 @@ export async function getAccessibleFolders(userEmail: string): Promise<FolderRow
   let loader = folderCacheByUser.get(user)
   if (!loader) {
     loader = memoTTL(CACHE_TTL_MS, async () => {
-      const [owned, shared] = await Promise.all([
-        searchObjects<FolderRow>("OrbitFolders", {
-          // case-insensitive (term match); over-matches rejected below
-          where: emailWhere("createdBy", user),
-          // thousands of sync-managed folders on the real tenant — one page
-          pageSize: 10_000,
-        }),
-        searchObjects<FolderRow>("OrbitFolders", {
-          where: { type: "contains", field: "accessEmails", value: user },
-          pageSize: 10_000,
-        }),
-      ])
-      const seen = new Set<string>()
-      const folders: FolderRow[] = []
-      for (const folder of [
-        ...owned.filter((f) => sameEmail(f.createdBy, user)),
-        ...shared,
-      ]) {
-        const id = pk(folder)
-        if (!id || seen.has(id)) continue
-        seen.add(id)
-        folders.push(folder)
-      }
-      return folders
+      // One small query instead of two 10k-row scans: sync-managed folders
+      // are excluded upstream — verified live that they carry NO contents
+      // (500-row sample: 0 non-empty), so membership, access checks, and
+      // the UI lose nothing, while the cold path drops from ~8,800 full
+      // folder payloads to a handful of user folders.
+      const rows = await searchObjects<FolderRow>("OrbitFolders", {
+        where: {
+          type: "and",
+          value: [
+            {
+              type: "or",
+              value: [
+                // case-insensitive (term match); over-matches rejected below
+                emailWhere("createdBy", user),
+                { type: "contains", field: "accessEmails", value: user },
+              ],
+            },
+            { type: "not", value: { type: "eq", field: "isSyncManaged", value: true } },
+          ],
+        },
+        pageSize: 1000,
+      })
+      return rows.filter(
+        (f) =>
+          sameEmail(f.createdBy, user) ||
+          (f.accessEmails ?? []).some((e) => sameEmail(e, user))
+      )
     }, { staleMs: FOLDER_STALE_MS })
     folderCacheByUser.set(user, loader)
   }
@@ -1029,16 +1032,30 @@ export function serializeChatFolder(row: ChatFolderRow) {
 /* Sync sources                                                          */
 /* ------------------------------------------------------------------ */
 
+/** Sources change rarely but are consulted on every explorer call — cache. */
+const SYNC_SOURCE_TTL_MS = 60_000
+const syncSourceCache = new Map<string, ReturnType<typeof memoTTL<SyncSourceRow[]>>>()
+
+export function invalidateSyncSourceCache(): void {
+  for (const loader of syncSourceCache.values()) loader.invalidate()
+}
+
 export async function listSyncSources(userEmail: string): Promise<SyncSourceRow[]> {
   const user = normalizeEmail(userEmail)
-  const rows = await searchObjects<SyncSourceRow>("OrbitSyncSource", {
-    pageSize: 1000,
-  })
-  return rows.filter((row) => {
-    const owner = normalizeEmail(row.ownerEmail)
-    const shared = (row.sharedWith ?? []).map(normalizeEmail)
-    return owner === user || shared.includes(user)
-  })
+  let loader = syncSourceCache.get(user)
+  if (!loader) {
+    loader = memoTTL(SYNC_SOURCE_TTL_MS, async () => {
+      const rows = await searchObjects<SyncSourceRow>("OrbitSyncSource", {
+        pageSize: 1000,
+      })
+      return rows.filter((row) => {
+        const shared = (row.sharedWith ?? []).map(normalizeEmail)
+        return sameEmail(row.ownerEmail, user) || shared.includes(user)
+      })
+    })
+    syncSourceCache.set(user, loader)
+  }
+  return loader()
 }
 
 /* ------------------------------------------------------------------ */

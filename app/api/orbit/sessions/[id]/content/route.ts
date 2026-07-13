@@ -1,8 +1,8 @@
 import { ensureMainBranch } from "@/lib/foundry/chat"
 import {
+  getSessionBranches,
   getSessionMessages,
   getSessionRow,
-  pk,
   serializeContent,
 } from "@/lib/foundry/ontology"
 import { errorResponse, json, requireLive } from "@/lib/foundry/http"
@@ -20,10 +20,20 @@ export async function GET(
   try {
     const { id } = await params
     const userEmail = await resolveRequestUser(request)
-    const sessionRow = await getSessionRow(id, userEmail)
+    // All three queries are independent — fetch concurrently; nothing is
+    // returned unless the ownership check passes.
+    const [sessionRow, messages, existingBranches] = await Promise.all([
+      getSessionRow(id, userEmail),
+      getSessionMessages(id),
+      getSessionBranches(id),
+    ])
     if (!sessionRow) return json({ error: "Session not found" }, { status: 404 })
-    const { session, branches } = await ensureMainBranch(sessionRow, userEmail)
-    const messages = await getSessionMessages(pk(session))
+    let session = sessionRow
+    let branches = existingBranches
+    if (branches.length === 0) {
+      // legacy session without a main branch — repair (rare, refetches)
+      ;({ session, branches } = await ensureMainBranch(sessionRow, userEmail))
+    }
     return json(serializeContent(messages, session, branches))
   } catch (error) {
     return errorResponse(error)

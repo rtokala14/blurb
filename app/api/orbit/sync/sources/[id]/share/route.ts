@@ -1,5 +1,6 @@
 import { applyAction, getObject } from "@/lib/foundry/client"
 import {
+  invalidateSyncSourceCache,
   normalizeEmail,
   sameEmail,
   serializeSyncSource,
@@ -58,6 +59,7 @@ export async function PUT(
       OrbitSyncSource: id,
       sharedWith,
     })
+    invalidateSyncSourceCache()
     const updated = await getObject<SyncSourceRow>("OrbitSyncSource", id)
     return json({
       success: true,

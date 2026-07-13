@@ -75,7 +75,7 @@ function ActionButton({
   )
 }
 
-export function Message({
+function MessageImpl({
   session,
   message,
   onRegenerate,
@@ -365,3 +365,21 @@ export function Message({
     </div>
   )
 }
+
+/**
+ * Memoized: during streaming the store replaces the sessions array on every
+ * chunk, which would re-render (and re-parse the markdown of) EVERY message
+ * in the transcript. Only the message whose object identity changed — plus
+ * structural session changes that affect the branch switcher — re-render.
+ */
+export const Message = React.memo(MessageImpl, (prev, next) => {
+  return (
+    prev.message === next.message &&
+    prev.session.id === next.session.id &&
+    prev.session.leafId === next.session.leafId &&
+    prev.session.activeBranchId === next.session.activeBranchId &&
+    prev.session.branches === next.session.branches &&
+    Object.keys(prev.session.messages).length ===
+      Object.keys(next.session.messages).length
+  )
+})

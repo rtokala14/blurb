@@ -92,6 +92,11 @@ export function LiveProvider({ children }: { children: React.ReactNode }) {
 
   React.useEffect(() => {
     let cancelled = false
+    // Fire both immediately: bootstrap doesn't need config's answer to
+    // start, so the probe round-trip comes off the cold-start critical path
+    // (in demo mode the bootstrap 503 is simply discarded).
+    const bootstrapPromise = liveApi.bootstrap()
+    bootstrapPromise.catch(() => undefined)
     liveApi
       .config()
       .then(async (config) => {
@@ -99,7 +104,7 @@ export function LiveProvider({ children }: { children: React.ReactNode }) {
         useOrbit.getState().setLive(config.live, config.userEmail, config.isAdmin)
         if (!config.live) return
         try {
-          const bootstrap = await liveApi.bootstrap()
+          const bootstrap = await bootstrapPromise
           if (cancelled) return
           hydrateFromBootstrap(bootstrap)
         } catch (error) {
