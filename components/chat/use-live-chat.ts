@@ -3,6 +3,13 @@
 import * as React from "react"
 import { toast } from "sonner"
 
+import {
+  chatLineForDoc,
+  deriveDocArtifacts,
+  isDocEnvelopeContent,
+} from "@/lib/docgen/artifacts"
+import { parseDocEnvelope, parseStreamingDoc } from "@/lib/docgen/parse"
+import { getDocSkill } from "@/lib/docgen/skills"
 import { liveApi, streamTurn } from "@/lib/live-api"
 import { parseStreamingLiveText, parseLiveMessage } from "@/lib/live-citations"
 import {
@@ -11,7 +18,7 @@ import {
   transcriptToTree,
 } from "@/lib/live-map"
 import { uid, useOrbit } from "@/lib/store"
-import type { ChatMessage } from "@/lib/types"
+import type { Artifact, ChatMessage } from "@/lib/types"
 
 /**
  * Live chat driver against Foundry (same interface as useChatSimulation so
@@ -26,9 +33,13 @@ export function useLiveChat(sessionId: string) {
   const loadContent = React.useCallback(async (rid: string) => {
     try {
       const content = await liveApi.content(rid)
-      const { messages, leafId } = transcriptToTree(content.messages)
+      const tree = transcriptToTree(content.messages)
+      // Envelope-bearing assistant messages become Studio artifacts; their
+      // chat content collapses to a one-line summary + card.
+      const derived = deriveDocArtifacts(rid, tree.messages)
       const store = useOrbit.getState()
-      store.setSessionTranscript(rid, messages, leafId)
+      store.setSessionTranscript(rid, derived.messages, tree.leafId)
+      store.setSessionArtifacts(rid, derived.artifacts)
       store.patchSession(rid, {
         branches: (content.branches ?? []).map(mapLiveBranch),
         activeBranchId: content.activeBranchId ?? null,
@@ -95,10 +106,11 @@ export function useLiveChat(sessionId: string) {
   }, [])
 
   const send = React.useCallback(
-    async (text: string) => {
+    async (text: string, opts?: { docSkillId?: string }) => {
       const store = useOrbit.getState()
       let session = store.sessions.find((s) => s.id === sessionId)
       if (!session) return
+      const docSkill = getDocSkill(opts?.docSkillId)
       if (session.scopeDocIds.length === 0) {
         toast.error("Select documents first", {
           description: "The agent only answers from documents in scope.",
@@ -144,6 +156,27 @@ export function useLiveChat(sessionId: string) {
           session.scopeDocIds.length === 1 ? "document" : "documents"
         } in scope`,
       })
+      // Generation turns get an optimistic artifact that streams into the
+      // Studio panel; the chat shows its card instead of the raw envelope.
+      let artifactId: string | null = null
+      if (docSkill) {
+        artifactId = uid("art")
+        const artifact: Artifact = {
+          id: artifactId,
+          kind: "doc",
+          title: docSkill.name,
+          status: "generating",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          sourceDocIds: session.scopeDocIds,
+          sessionId: rid,
+          docSkillId: docSkill.id,
+          live: true,
+        }
+        store.addArtifact(artifact)
+        store.setOpenArtifact(artifactId)
+      }
+
       store.addMessage(rid, {
         id: assistantMessageId,
         parentId: userMessageId,
@@ -151,11 +184,14 @@ export function useLiveChat(sessionId: string) {
         content: "",
         createdAt: new Date().toISOString(),
         phase: "thinking",
+        ...(artifactId ? { artifactIds: [artifactId] } : {}),
         thinking: [
           {
             id: uid("t"),
-            kind: "search",
-            label: "Querying the Foundry agent across your documents",
+            kind: docSkill ? "synthesize" : "search",
+            label: docSkill
+              ? `Drafting a ${docSkill.name} from your documents`
+              : "Querying the Foundry agent across your documents",
             docIds: session.scopeDocIds.slice(0, 4),
           },
         ],
@@ -174,6 +210,7 @@ export function useLiveChat(sessionId: string) {
         abortRef.current = null
       }
 
+      let lastParsedLength = 0
       try {
         await streamTurn(
           rid,
@@ -185,11 +222,31 @@ export function useLiveChat(sessionId: string) {
             mode: session.mode === "thinking" ? "thinking" : undefined,
             // attached persona frames the turn (server resolves + injects)
             personaId: session.personaId ?? undefined,
+            docSkillId: docSkill?.id,
           },
           {
             onChunk: (accumulated) => {
               // reply text is flowing — the thinking phase is over
               stopTracePolling()
+              if (artifactId && docSkill) {
+                // generation turn: stream into the artifact, not the chat
+                useOrbit.getState().updateMessage(rid, assistantMessageId, {
+                  phase: "streaming",
+                })
+                if (accumulated.length - lastParsedLength > 240) {
+                  lastParsedLength = accumulated.length
+                  const model = parseStreamingDoc(accumulated, {
+                    fallbackTitle: docSkill.name,
+                    fallbackDocType: docSkill.id,
+                  })
+                  useOrbit.getState().updateArtifact(artifactId, {
+                    model,
+                    title: model.meta.title,
+                    updatedAt: new Date().toISOString(),
+                  })
+                }
+                return
+              }
               const parsed = parseStreamingLiveText(accumulated)
               useOrbit.getState().updateMessage(rid, assistantMessageId, {
                 phase: "streaming",
@@ -198,6 +255,7 @@ export function useLiveChat(sessionId: string) {
               })
             },
             onError: (payload) => {
+              if (artifactId) useOrbit.getState().removeArtifact(artifactId)
               useOrbit.getState().updateMessage(rid, assistantMessageId, {
                 phase: "done",
                 content:
@@ -206,6 +264,7 @@ export function useLiveChat(sessionId: string) {
                 errorType:
                   payload.type === "context_exceeded" ? "context_exceeded" : "error",
                 thinking: undefined,
+                artifactIds: undefined,
               })
               toast.error(payload.title || "Response failed", {
                 description: payload.message,
@@ -213,12 +272,34 @@ export function useLiveChat(sessionId: string) {
               finish()
             },
             onComplete: (finalText) => {
-              const parsed = parseLiveMessage(finalText)
-              useOrbit.getState().updateMessage(rid, assistantMessageId, {
-                phase: "done",
-                content: parsed.content,
-                citations: parsed.citations.map(liveCitationToUi),
-              })
+              if (artifactId && docSkill && isDocEnvelopeContent(finalText)) {
+                const model = parseDocEnvelope(finalText, {
+                  fallbackTitle: docSkill.name,
+                  fallbackDocType: docSkill.id,
+                })
+                useOrbit.getState().updateArtifact(artifactId, {
+                  model,
+                  title: model.meta.title,
+                  status: "ready",
+                  updatedAt: new Date().toISOString(),
+                })
+                useOrbit.getState().updateMessage(rid, assistantMessageId, {
+                  phase: "done",
+                  content: chatLineForDoc(model),
+                  citations: [],
+                })
+              } else {
+                // no envelope → treat as an ordinary reply (matches how the
+                // transcript will be derived on reload)
+                if (artifactId) useOrbit.getState().removeArtifact(artifactId)
+                const parsed = parseLiveMessage(finalText)
+                useOrbit.getState().updateMessage(rid, assistantMessageId, {
+                  phase: "done",
+                  content: parsed.content,
+                  citations: parsed.citations.map(liveCitationToUi),
+                  ...(artifactId ? { artifactIds: undefined } : {}),
+                })
+              }
               finish()
               // Reconcile optimistic ids with persisted rows + fresh title.
               void loadContent(rid)
@@ -231,6 +312,18 @@ export function useLiveChat(sessionId: string) {
           controller.signal
         )
       } catch (error) {
+        // stopped or dropped mid-generation: keep a partial draft if one
+        // streamed in (run recovery / reload will supply the final version)
+        if (artifactId) {
+          const artifact = useOrbit
+            .getState()
+            .artifacts.find((a) => a.id === artifactId)
+          if (artifact?.model && artifact.model.blocks.length > 0) {
+            useOrbit.getState().updateArtifact(artifactId, { status: "ready" })
+          } else {
+            useOrbit.getState().removeArtifact(artifactId)
+          }
+        }
         if ((error as Error).name !== "AbortError") {
           useOrbit.getState().updateMessage(rid, assistantMessageId, {
             phase: "done",

@@ -1,3 +1,6 @@
+// type-only import — erased at runtime, so no module cycle with docgen/model
+import type { DocModel, DocVersionEntry } from "@/lib/docgen/model"
+
 /* ------------------------------------------------------------------ */
 /* Documents                                                           */
 /* ------------------------------------------------------------------ */
@@ -99,6 +102,16 @@ export interface Artifact {
   sourceDocIds: string[]
   /** short description of the last AI edit applied */
   lastEditSummary?: string
+  /** live mode: session this artifact belongs to */
+  sessionId?: string
+  /** live mode: skill pack that produced it */
+  docSkillId?: string
+  /** live mode: parsed document content (demo artifacts have none) */
+  model?: DocModel
+  /** live mode: accepted edit rounds, oldest first */
+  versions?: DocVersionEntry[]
+  /** live mode: derived from a real transcript (vs demo seed) */
+  live?: boolean
 }
 
 export type MessageRole = "user" | "assistant"

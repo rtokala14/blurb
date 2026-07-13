@@ -8,7 +8,7 @@ import { useOrbit } from "@/lib/store"
 import type { ChatMessage } from "@/lib/types"
 
 export interface ChatController {
-  send: (text: string) => void
+  send: (text: string, opts?: { docSkillId?: string }) => void
   regenerate: (message: ChatMessage) => void
   editAndBranch: (message: ChatMessage, newText: string) => void
   stop: () => void

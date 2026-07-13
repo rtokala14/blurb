@@ -146,8 +146,8 @@ export interface TurnRequest {
   compactContext: string
 }
 
-/** Prepend a persona preamble ahead of the turn input (blank → unchanged). */
-function withPersona(preamble: string | undefined, input: string): string {
+/** Prepend an instruction preamble ahead of the turn input (blank → unchanged). */
+function withPreamble(preamble: string | undefined, input: string): string {
   const trimmed = (preamble ?? "").trim()
   return trimmed ? `${trimmed}\n\n${input}` : input
 }
@@ -163,6 +163,7 @@ export function prepareTurnRequest({
   pinnedAgentRid,
   pinnedAgentVersion,
   personaPreamble,
+  docSkillPrompt,
 }: {
   mode: string
   summary: string | null | undefined
@@ -176,6 +177,8 @@ export function prepareTurnRequest({
   pinnedAgentVersion?: string | null
   /** optional persona system-preamble, prepended ahead of the input */
   personaPreamble?: string
+  /** optional document-skill instruction block — outermost when present */
+  docSkillPrompt?: string
 }): TurnRequest {
   const normalizedMode = normalizeMode(mode)
   const compactContext = buildCompactContext(summary, persistedMessages)
@@ -192,8 +195,9 @@ export function prepareTurnRequest({
       ? pinnedAgentVersion
       : null
 
-  // The persona preamble frames the turn; document scope (parameterInputs)
-  // stays orthogonal. Sources still win — the preamble carries that clause.
+  // Preambles frame the turn; document scope (parameterInputs) stays
+  // orthogonal. Stacking order: doc-skill (structure) → persona (lens) →
+  // input. Sources still win — both preambles carry that clause.
   const baseInput =
     normalizedMode === THINKING_MODE
       ? userInput.trim()
@@ -202,7 +206,7 @@ export function prepareTurnRequest({
   return {
     agentRid: targetAgentRid,
     agentVersion,
-    userInput: withPersona(personaPreamble, baseInput),
+    userInput: withPreamble(docSkillPrompt, withPreamble(personaPreamble, baseInput)),
     parameterInputs,
     compactContext,
   }

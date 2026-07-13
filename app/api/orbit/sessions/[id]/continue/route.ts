@@ -37,6 +37,7 @@ export async function POST(
       branchId?: string
       parentMessageId?: string
       personaId?: string | null
+      docSkillId?: string | null
     }
     const userInput = (body.userInput ?? "").trim()
     if (!userInput) return json({ error: "userInput is required" }, { status: 422 })
@@ -91,6 +92,7 @@ export async function POST(
       sessionTraceId: body.sessionTraceId,
       scopedDocIds: sanitized.scopedDocIds,
       personaId: body.personaId,
+      docSkillId: body.docSkillId,
     })
 
     return new NextResponse(stream, {

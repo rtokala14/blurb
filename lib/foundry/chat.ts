@@ -7,6 +7,7 @@ import {
   streamingContinue,
 } from "./client"
 import { getFoundryConfig } from "./config"
+import { buildDocSkillPrompt, getDocSkill } from "@/lib/docgen/skills"
 import { personaPreambleForId } from "@/lib/personas"
 import {
   createBranchRow,
@@ -48,6 +49,8 @@ export interface RunTurnParams {
   scopedDocIds: string[]
   /** optional persona attached to this session (built-in registry id) */
   personaId?: string | null
+  /** optional document skill pack — turns this into a generation turn */
+  docSkillId?: string | null
 }
 
 export interface RunTurnResult {
@@ -85,6 +88,10 @@ export async function runSessionTurn(params: RunTurnParams): Promise<RunTurnResu
     pinnedAgentRid: params.session.currentAgentRid,
     pinnedAgentVersion: params.session.currentAgentVersion,
     personaPreamble: personaPreambleForId(params.personaId),
+    docSkillPrompt: (() => {
+      const skill = getDocSkill(params.docSkillId)
+      return skill ? buildDocSkillPrompt(skill) : undefined
+    })(),
   })
 
   // AIP session creation is a slow network call independent of persistence —

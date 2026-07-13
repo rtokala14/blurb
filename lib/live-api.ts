@@ -337,6 +337,7 @@ export async function streamTurn(
     messageId?: string
     sessionTraceId?: string
     personaId?: string | null
+    docSkillId?: string | null
   },
   callbacks: StreamTurnCallbacks,
   signal?: AbortSignal
@@ -353,6 +354,7 @@ export async function streamTurn(
         messageId: body.messageId ?? crypto.randomUUID(),
         sessionTraceId: body.sessionTraceId ?? crypto.randomUUID(),
         personaId: body.personaId ?? undefined,
+        docSkillId: body.docSkillId ?? undefined,
       }),
       signal,
     }

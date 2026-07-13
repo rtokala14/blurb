@@ -64,6 +64,14 @@ const suggestions = [
   "/deck Build a QBR deck from the Q3 forecast",
 ]
 
+/** Live mode gets grounded, discipline-neutral starters (no demo commands). */
+const liveSuggestions = [
+  "Summarize the key obligations and deadlines across these documents",
+  "What risks, rejections, or open actions should I be aware of?",
+  "Which requirements in these documents are still unresolved?",
+  "What would a reviewer flag before approving this package?",
+]
+
 export function ChatWorkspace() {
   const sessions = useOrbit((s) => s.sessions)
   const activeSessionId = useOrbit((s) => s.activeSessionId)
@@ -398,7 +406,7 @@ export function ChatWorkspace() {
                     )}
                     <div className="grid w-full max-w-lg grid-cols-1 gap-2">
                       {(getBuiltinPersona(session.personaId)?.samplePrompts ??
-                        suggestions).map((s) => (
+                        (sim.live ? liveSuggestions : suggestions)).map((s) => (
                         <button
                           key={s}
                           onClick={() => sim.send(s)}

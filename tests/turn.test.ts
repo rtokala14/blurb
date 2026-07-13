@@ -159,6 +159,25 @@ describe("prepareTurnRequest", () => {
     expect(turn.userInput).toBe("<persona>ACT AS Y</persona>\n\ndeep question")
   })
 
+  test("doc-skill prompt stacks outermost, ahead of the persona", () => {
+    const turn = prepareTurnRequest({
+      mode: "regular",
+      summary: null,
+      persistedMessages: [],
+      userInput: "draft brief",
+      userDocs: ["d1"],
+      ontology: "o",
+      agents: AGENTS,
+      personaPreamble: "<persona>LENS</persona>",
+      docSkillPrompt: "<doc-skill>STRUCTURE</doc-skill>",
+    })
+    expect(turn.userInput.startsWith("<doc-skill>STRUCTURE</doc-skill>")).toBe(true)
+    expect(turn.userInput.indexOf("<doc-skill>")).toBeLessThan(
+      turn.userInput.indexOf("<persona>")
+    )
+    expect(turn.userInput).toContain("draft brief")
+  })
+
   test("no persona preamble leaves the input unchanged", () => {
     const withEmpty = prepareTurnRequest({
       mode: "regular",

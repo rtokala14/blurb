@@ -133,6 +133,9 @@ interface OrbitState {
   /* artifacts / studio */
   addArtifact: (artifact: Artifact) => void
   updateArtifact: (id: string, patch: Partial<Artifact>) => void
+  removeArtifact: (id: string) => void
+  /** live mode: replace a session's derived artifacts after a transcript load */
+  setSessionArtifacts: (sessionId: string, artifacts: Artifact[]) => void
   setOpenArtifact: (id: string | null) => void
 }
 
@@ -331,6 +334,33 @@ export const useOrbit = create<OrbitState>((set) => ({
     set((s) => ({
       artifacts: s.artifacts.map((a) => (a.id === id ? { ...a, ...patch } : a)),
     })),
+  removeArtifact: (id) =>
+    set((s) => ({
+      artifacts: s.artifacts.filter((a) => a.id !== id),
+      openArtifactId: s.openArtifactId === id ? null : s.openArtifactId,
+    })),
+  setSessionArtifacts: (sessionId, artifacts) =>
+    set((s) => {
+      const kept = s.artifacts.filter(
+        (a) => !(a.live && a.sessionId === sessionId)
+      )
+      const next = [...artifacts, ...kept]
+      // if the open artifact was this session's optimistic one and got
+      // replaced by its derived twin, follow to the newest for the session
+      const open = s.artifacts.find((a) => a.id === s.openArtifactId)
+      let openArtifactId = s.openArtifactId
+      if (
+        open?.live &&
+        open.sessionId === sessionId &&
+        !next.some((a) => a.id === open.id)
+      ) {
+        const replacement = [...artifacts].sort((a, b) =>
+          b.createdAt.localeCompare(a.createdAt)
+        )[0]
+        openArtifactId = replacement?.id ?? null
+      }
+      return { artifacts: next, openArtifactId }
+    }),
   setOpenArtifact: (id) => set({ openArtifactId: id }),
 }))
 

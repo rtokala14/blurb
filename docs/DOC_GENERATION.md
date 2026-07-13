@@ -1,10 +1,22 @@
 # Document Generation & Editing — implementation plan
 
-**Status:** proposed (scope + design; nothing built yet)
+**Status:** PRs 1–3 built and live-verified (generation, editing, exports,
+save-to-library). PR 4 (sheets/decks, official brand assets) remains open.
 **Owner:** Orbit Docs
 **Audience:** whoever picks up the build — this is the complete spec.
 **Depends on:** the personas feature (`docs/PERSONAS.md`) — skill packs compose
 with personas at the same injection seam.
+
+**Implementation notes (deviations from the plan below):**
+- Whole-document revisions run through the refine query (like section edits)
+  rather than a fresh generation turn — simpler, keeps chat history clean.
+  Revisit if long documents hit refine limits.
+- Artifacts are re-derived from the persisted transcript on every load (the
+  assistant message IS the envelope), so base drafts survive reloads and
+  devices without localStorage; only local edit rounds are browser-bound.
+- The parser also strips leading agent chatter ("Final Answer:", "Let me…")
+  ahead of the first heading, and tolerates blank-separated list items —
+  both observed in live output.
 
 ## What this is
 
