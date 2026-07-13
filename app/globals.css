@@ -1,5 +1,16 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "./typeset.css";
+
+/* shadcn/typeset preset for chat messages — dense, streaming-stable. */
+.typeset-chat {
+  --typeset-font-body: inherit;
+  --typeset-font-heading: inherit;
+  --typeset-font-mono: var(--font-mono);
+  --typeset-size: 0.875rem;
+  --typeset-leading: 1.65;
+  --typeset-flow: 0.85em;
+}
 
 @custom-variant dark (&:is(.dark *));
 
