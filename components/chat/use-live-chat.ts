@@ -63,12 +63,25 @@ export function useLiveChat(sessionId: string) {
       const tick = async () => {
         if (stopped) return
         try {
-          const { steps } = await liveApi.trace(rid, traceId)
+          const { status, steps } = await liveApi.trace(rid, traceId)
           if (stopped) return
-          if (steps.length > 0) {
+          // Tool calls done but text not flowing yet — fill the dead air so
+          // the indicator never freezes on the last trace line.
+          const display =
+            status === "COMPLETE"
+              ? [
+                  ...steps,
+                  {
+                    id: "trace-writing",
+                    kind: "synthesize" as const,
+                    label: "Writing the response…",
+                  },
+                ]
+              : steps
+          if (display.length > 0) {
             useOrbit.getState().updateMessage(rid, assistantMessageId, (m) =>
               // once the reply is streaming/done, leave the message alone
-              m.phase === "thinking" ? { thinking: steps } : {}
+              m.phase === "thinking" ? { thinking: display } : {}
             )
           }
         } catch {
@@ -118,8 +131,52 @@ export function useLiveChat(sessionId: string) {
         return
       }
 
+      // Optimistic UI: the user bubble + thinking placeholder land in the
+      // store BEFORE any network round-trip (session creation can take
+      // seconds), with a "sending" state until the server responds.
+      const userMessageId = uid("lm")
+      const assistantMessageId = uid("lm")
+      const parentId = session.leafId
       let rid = session.id
-      // Local placeholder session → create it on Foundry on first send.
+      store.addMessage(rid, {
+        id: userMessageId,
+        parentId,
+        role: "user",
+        content: text,
+        createdAt: new Date().toISOString(),
+        phase: "sending",
+        scopeLabel: `${session.scopeDocIds.length} ${
+          session.scopeDocIds.length === 1 ? "document" : "documents"
+        } in scope`,
+      })
+      store.addMessage(rid, {
+        id: assistantMessageId,
+        parentId: userMessageId,
+        role: "assistant",
+        content: "",
+        createdAt: new Date().toISOString(),
+        phase: "thinking",
+        thinking: [
+          {
+            id: uid("t"),
+            kind: docSkill ? "synthesize" : "search",
+            label: docSkill
+              ? `Drafting a ${docSkill.name} from your documents`
+              : "Querying the Foundry agent across your documents",
+            docIds: session.scopeDocIds.slice(0, 4),
+          },
+        ],
+      })
+      setBusyId(assistantMessageId)
+      let userMarkedSent = false
+      const markUserSent = () => {
+        if (userMarkedSent) return
+        userMarkedSent = true
+        useOrbit.getState().updateMessage(rid, userMessageId, { phase: "done" })
+      }
+
+      // Local placeholder session → create it on Foundry on first send
+      // (messages survive the id swap).
       if (!session.live) {
         try {
           const created = await liveApi.createSession({
@@ -135,27 +192,20 @@ export function useLiveChat(sessionId: string) {
           session = useOrbit.getState().sessions.find((s) => s.id === rid)
           if (!session) return
         } catch (error) {
+          useOrbit.getState().updateMessage(rid, userMessageId, { phase: "done" })
+          useOrbit.getState().updateMessage(rid, assistantMessageId, {
+            phase: "done",
+            content: "*(couldn't reach Foundry — try sending again)*",
+            errorType: "error",
+            thinking: undefined,
+          })
+          setBusyId(null)
           toast.error("Couldn't create the session", {
             description: error instanceof Error ? error.message : undefined,
           })
           return
         }
       }
-
-      const userMessageId = uid("lm")
-      const assistantMessageId = uid("lm")
-      const parentId = session.leafId
-      store.addMessage(rid, {
-        id: userMessageId,
-        parentId,
-        role: "user",
-        content: text,
-        createdAt: new Date().toISOString(),
-        phase: "done",
-        scopeLabel: `${session.scopeDocIds.length} ${
-          session.scopeDocIds.length === 1 ? "document" : "documents"
-        } in scope`,
-      })
       // Generation turns get an optimistic artifact that streams into the
       // Studio panel; the chat shows its card instead of the raw envelope.
       let artifactId: string | null = null
@@ -175,28 +225,10 @@ export function useLiveChat(sessionId: string) {
         }
         store.addArtifact(artifact)
         store.setOpenArtifact(artifactId)
+        useOrbit.getState().updateMessage(rid, assistantMessageId, {
+          artifactIds: [artifactId],
+        })
       }
-
-      store.addMessage(rid, {
-        id: assistantMessageId,
-        parentId: userMessageId,
-        role: "assistant",
-        content: "",
-        createdAt: new Date().toISOString(),
-        phase: "thinking",
-        ...(artifactId ? { artifactIds: [artifactId] } : {}),
-        thinking: [
-          {
-            id: uid("t"),
-            kind: docSkill ? "synthesize" : "search",
-            label: docSkill
-              ? `Drafting a ${docSkill.name} from your documents`
-              : "Querying the Foundry agent across your documents",
-            docIds: session.scopeDocIds.slice(0, 4),
-          },
-        ],
-      })
-      setBusyId(assistantMessageId)
 
       const controller = new AbortController()
       abortRef.current = controller
@@ -227,6 +259,7 @@ export function useLiveChat(sessionId: string) {
           {
             onChunk: (accumulated) => {
               // reply text is flowing — the thinking phase is over
+              markUserSent()
               stopTracePolling()
               if (artifactId && docSkill) {
                 // generation turn: stream into the artifact, not the chat
@@ -255,6 +288,7 @@ export function useLiveChat(sessionId: string) {
               })
             },
             onError: (payload) => {
+              markUserSent()
               if (artifactId) useOrbit.getState().removeArtifact(artifactId)
               useOrbit.getState().updateMessage(rid, assistantMessageId, {
                 phase: "done",
@@ -272,6 +306,7 @@ export function useLiveChat(sessionId: string) {
               finish()
             },
             onComplete: (finalText) => {
+              markUserSent()
               if (artifactId && docSkill && isDocEnvelopeContent(finalText)) {
                 const model = parseDocEnvelope(finalText, {
                   fallbackTitle: docSkill.name,
@@ -312,6 +347,7 @@ export function useLiveChat(sessionId: string) {
           controller.signal
         )
       } catch (error) {
+        markUserSent()
         // stopped or dropped mid-generation: keep a partial draft if one
         // streamed in (run recovery / reload will supply the final version)
         if (artifactId) {

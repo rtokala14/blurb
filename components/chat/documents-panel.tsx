@@ -92,10 +92,6 @@ export function DocumentsPanel({
   // only the newest page of ~19k docs.
   const { results: serverHits, searching } = useLiveDocSearch(query)
 
-  const tokenEstimate = docs
-    .filter((d) => selected.has(d.id))
-    .reduce((sum, d) => sum + d.pages * 620, 0)
-
   const FolderNode = ({ folder, depth }: { folder: DocFolder; depth: number }) => {
     const [open, setOpen] = React.useState(true)
     const childFolders = folders.filter((f) => f.parentId === folder.id)
@@ -417,17 +413,8 @@ export function DocumentsPanel({
 
       {/* Footer */}
       <div className="space-y-2 border-t p-2.5">
-        <div className="text-muted-foreground flex justify-between text-xs">
-          <span>
-            {selected.size} in scope · answers cite these sources
-          </span>
-          <span className="tabular-nums">
-            ≈{" "}
-            {tokenEstimate >= 1000
-              ? `${Math.round(tokenEstimate / 1000)}k`
-              : tokenEstimate}{" "}
-            tokens
-          </span>
+        <div className="text-muted-foreground text-xs">
+          {selected.size} in scope · answers cite these sources
         </div>
         <div className="flex gap-2">
           <Button

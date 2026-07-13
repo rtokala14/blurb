@@ -120,7 +120,7 @@ export interface Artifact {
 
 export type MessageRole = "user" | "assistant"
 
-export type MessagePhase = "thinking" | "streaming" | "done"
+export type MessagePhase = "sending" | "thinking" | "streaming" | "done"
 
 export interface ChatMessage {
   id: string

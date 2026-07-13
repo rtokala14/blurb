@@ -160,12 +160,23 @@ export function Message({
           </div>
         ) : (
           <>
-            <div className="bg-primary text-primary-foreground max-w-[85%] rounded-xl rounded-br-sm px-4 py-2.5">
+            <div
+              className={cn(
+                "bg-primary text-primary-foreground max-w-[85%] rounded-xl rounded-br-sm px-4 py-2.5 transition-opacity",
+                message.phase === "sending" && "opacity-70"
+              )}
+            >
               <p className="text-sm leading-relaxed whitespace-pre-wrap">
                 {message.content}
               </p>
             </div>
             <div className="mt-1 flex h-7 items-center gap-1">
+              {message.phase === "sending" && (
+                <span className="text-muted-foreground mr-1 flex items-center gap-1 text-xs">
+                  <span className="bg-primary size-1.5 animate-pulse rounded-full" />
+                  Sending…
+                </span>
+              )}
               <span className="text-muted-foreground mr-1 text-xs opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100">
                 {message.scopeLabel}
                 {message.editedFrom && " · edited"}

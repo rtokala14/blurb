@@ -221,7 +221,7 @@ describe("prepareTurnRequest", () => {
 })
 
 describe("summarizeTrace", () => {
-  test("maps tool calls to high-level steps with thoughts", () => {
+  test("the agent's narration is the step line; tool names only pick icons", () => {
     const steps = summarizeTrace({
       status: "IN_PROGRESS",
       toolCallGroups: [
@@ -241,39 +241,41 @@ describe("summarizeTrace", () => {
           toolCalls: [
             {
               toolMetadata: { name: "Document Retrieval", type: "FUNCTION" },
-              input: { thought: "Fetching pages 4-9." },
+              input: { thought: "Now reviewing the inspection checklist sections." },
             },
           ],
         },
       ],
     })
     expect(steps).toHaveLength(2)
+    expect(steps[0].label).toBe("I need to find the relevant contracts.")
     expect(steps[0].kind).toBe("search")
-    expect(steps[0].label).toBe("Object Query Tool")
-    expect(steps[0].detail).toBe("I need to find the relevant contracts.")
+    expect(steps[1].label).toBe("Now reviewing the inspection checklist sections.")
     expect(steps[1].kind).toBe("read")
-    // raw tool inputs/outputs must never appear anywhere in the summary
+    // tool names and raw inputs/outputs must never appear as content
+    expect(JSON.stringify(steps)).not.toContain("Object Query Tool")
     expect(JSON.stringify(steps)).not.toContain("ri.should.never.leak")
     expect(JSON.stringify(steps)).not.toContain("ri.leaky.output")
   })
 
-  test("collapses consecutive calls to the same tool with a counter", () => {
+  test("consecutive identical narration collapses; distinct lines stay", () => {
     const call = (thought: string) => ({
       toolMetadata: { name: "Semantic Search", type: "FUNCTION" },
       input: { thought },
     })
     const steps = summarizeTrace({
       toolCallGroups: [
-        { toolCalls: [call("first pass"), call("second pass")] },
-        { toolCalls: [call("third pass")] },
+        { toolCalls: [call("Scanning the WIR package."), call("Scanning the WIR package.")] },
+        { toolCalls: [call("Checking the test certificates.")] },
       ],
     })
-    expect(steps).toHaveLength(1)
-    expect(steps[0].label).toBe("Semantic Search ×3")
-    expect(steps[0].detail).toBe("third pass")
+    expect(steps.map((s) => s.label)).toEqual([
+      "Scanning the WIR package.",
+      "Checking the test certificates.",
+    ])
   })
 
-  test("truncates long thoughts and normalizes whitespace", () => {
+  test("truncates long narration and normalizes whitespace", () => {
     const steps = summarizeTrace({
       toolCallGroups: [
         {
@@ -286,9 +288,9 @@ describe("summarizeTrace", () => {
         },
       ],
     })
-    expect(steps[0].detail!.length).toBeLessThanOrEqual(160)
-    expect(steps[0].detail).toContain("a b c")
-    expect(steps[0].detail!.endsWith("…")).toBe(true)
+    expect(steps[0].label.length).toBeLessThanOrEqual(220)
+    expect(steps[0].label).toContain("a b c")
+    expect(steps[0].label.endsWith("…")).toBe(true)
   })
 
   test("empty for missing or empty traces", () => {
@@ -297,12 +299,16 @@ describe("summarizeTrace", () => {
     expect(summarizeTrace({ toolCallGroups: [] })).toEqual([])
   })
 
-  test("unnamed tools get a generic label", () => {
+  test("calls without narration fall back to a friendly activity label", () => {
     const steps = summarizeTrace({
-      toolCallGroups: [{ toolCalls: [{ input: { thought: "hmm" } }] }],
+      toolCallGroups: [
+        { toolCalls: [{ toolMetadata: { name: "Semantic Search" } }] },
+        { toolCalls: [{ input: { thought: "" } }] },
+      ],
     })
-    expect(steps[0].label).toBe("Working")
-    expect(steps[0].kind).toBe("tool")
+    expect(steps[0].label).toBe("Searching the documents")
+    expect(steps[1].label).toBe("Working")
+    expect(steps[1].kind).toBe("tool")
   })
 })
 

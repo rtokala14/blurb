@@ -236,7 +236,7 @@ export interface TraceStep {
   detail?: string
 }
 
-const THOUGHT_LIMIT = 160
+const THOUGHT_LIMIT = 220
 
 function traceKindFor(toolName: string): TraceStep["kind"] {
   const name = toolName.toLowerCase()
@@ -258,37 +258,44 @@ function cleanThought(thought: string | undefined): string | undefined {
   return text.length > THOUGHT_LIMIT ? `${text.slice(0, THOUGHT_LIMIT - 1)}…` : text
 }
 
+/** Reader-friendly fallback when a tool call carries no narration. */
+function friendlyToolLabel(name: string): string {
+  switch (traceKindFor(name || "tool")) {
+    case "search":
+      return "Searching the documents"
+    case "read":
+      return "Reading document pages"
+    case "analyze":
+      return "Analyzing the findings"
+    default:
+      return "Working"
+  }
+}
+
 /**
  * Collapse a raw AIP session trace into high-level steps for the thinking
- * indicator. Deliberately surfaces ONLY the tool name and the agent's own
- * one-line "thought" — never tool inputs/outputs (individual fetches, RIDs,
- * query payloads). Consecutive calls to the same tool collapse into one step
- * with a ×N counter.
+ * indicator. The agent narrates each step in its one-line "thought" — that
+ * narration IS the display line (tool names only pick the icon, or stand in
+ * when a call carries no thought). Never surfaces tool inputs/outputs
+ * (individual fetches, RIDs, query payloads). Consecutive identical lines
+ * collapse into one step.
  */
 export function summarizeTrace(trace: RawSessionTrace | null | undefined): TraceStep[] {
   if (!trace?.toolCallGroups) return []
   const steps: TraceStep[] = []
-  let previous: { name: string; count: number; step: TraceStep } | null = null
+  let previousLabel: string | null = null
 
   for (const group of trace.toolCallGroups) {
     for (const call of group.toolCalls ?? []) {
-      const name = (call.toolMetadata?.name ?? "").trim() || "Working"
-      const detail = cleanThought(call.input?.thought)
-      if (previous && previous.name === name) {
-        previous.count += 1
-        previous.step.label = `${name} ×${previous.count}`
-        // keep the most recent thought as the step detail
-        if (detail) previous.step.detail = detail
-        continue
-      }
-      const step: TraceStep = {
+      const name = (call.toolMetadata?.name ?? "").trim()
+      const label = cleanThought(call.input?.thought) ?? friendlyToolLabel(name)
+      if (label === previousLabel) continue
+      previousLabel = label
+      steps.push({
         id: `trace-${steps.length}`,
-        kind: traceKindFor(name),
-        label: name,
-        ...(detail ? { detail } : {}),
-      }
-      steps.push(step)
-      previous = { name, count: 1, step }
+        kind: traceKindFor(name || "tool"),
+        label,
+      })
     }
   }
   return steps
