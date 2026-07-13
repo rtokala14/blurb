@@ -73,6 +73,8 @@ interface OrbitState {
   live: boolean | null
   liveUserEmail: string | null
   liveIsAdmin: boolean
+  /** live mode: bootstrap data has landed (gate demo seeds until then) */
+  liveHydrated: boolean
 
   activeSessionId: string
   /** artifact currently open in the chat-side Studio panel (null = closed) */
@@ -107,6 +109,7 @@ interface OrbitState {
   removeDoc: (id: string) => void
   addFolder: (folder: DocFolder) => void
   renameFolder: (id: string, name: string) => void
+  patchFolder: (id: string, patch: Partial<DocFolder>) => void
 
   /* sharepoint */
   updateSite: (id: string, patch: Partial<SharePointSite>) => void
@@ -152,6 +155,7 @@ export const useOrbit = create<OrbitState>((set) => ({
   live: null,
   liveUserEmail: null,
   liveIsAdmin: false,
+  liveHydrated: false,
 
   setLive: (live, userEmail, isAdmin) =>
     set({ live, liveUserEmail: userEmail ?? null, liveIsAdmin: Boolean(isAdmin) }),
@@ -162,6 +166,7 @@ export const useOrbit = create<OrbitState>((set) => ({
       sessions: data.sessions,
       sites: data.sites,
       chatFolders: data.chatFolders ?? [],
+      liveHydrated: true,
       activeSessionId:
         data.sessions.find((x) => x.id === s.activeSessionId)?.id ??
         data.sessions[0]?.id ??
@@ -219,6 +224,10 @@ export const useOrbit = create<OrbitState>((set) => ({
   renameFolder: (id, name) =>
     set((s) => ({
       folders: s.folders.map((f) => (f.id === id ? { ...f, name } : f)),
+    })),
+  patchFolder: (id, patch) =>
+    set((s) => ({
+      folders: s.folders.map((f) => (f.id === id ? { ...f, ...patch } : f)),
     })),
 
   updateSite: (id, patch) =>

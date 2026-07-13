@@ -57,13 +57,17 @@ export async function getUsageToday(email: string): Promise<UsageRow | null> {
     where: {
       type: "and",
       value: [
-        { type: "eq", field: "email", value: normalizeEmail(email) },
+        // case-insensitive (term match); verified in JS below
+        { type: "containsAllTerms", field: "email", value: normalizeEmail(email) },
         { type: "eq", field: "usageDate", value: todayUtc() },
       ],
     },
     pageSize: 10,
   })
-  return rows[0] ?? null
+  return (
+    rows.find((row) => normalizeEmail(row.email) === normalizeEmail(email)) ??
+    null
+  )
 }
 
 /** In-flight reservations so concurrent uploads can't blow past the limit. */

@@ -144,6 +144,27 @@ export const pk = (row: { __primaryKey?: unknown; primaryKey_?: unknown }) =>
 export const normalizeEmail = (value: string | null | undefined) =>
   (value ?? "").trim().toLowerCase()
 
+/** Case-insensitive email equality — use for EVERY email comparison. */
+export const sameEmail = (
+  a: string | null | undefined,
+  b: string | null | undefined
+) => normalizeEmail(a) !== "" && normalizeEmail(a) === normalizeEmail(b)
+
+/**
+ * Case-insensitive upstream email filter. Plain `eq` is case-sensitive and
+ * the tenant holds mixed-case rows (e.g. "Rohit.Tokala@jacobs.com" beside
+ * "rohit.tokala@…" — verified live: eq-lower missed 30 docs / 6 sessions /
+ * 2 folders). The search index lowercases terms, so `containsAllTerms`
+ * matches any casing exactly; callers MUST still JS-verify rows with
+ * sameEmail() because a token permutation could over-match in theory.
+ */
+export const emailWhere = (field: string, email: string) =>
+  ({
+    type: "containsAllTerms",
+    field,
+    value: normalizeEmail(email),
+  }) as const
+
 const now = () => new Date().toISOString()
 
 function byCreatedAt<T extends { createdAt?: string; __primaryKey: string }>(
@@ -225,7 +246,8 @@ export async function getAccessibleFolders(userEmail: string): Promise<FolderRow
     loader = memoTTL(CACHE_TTL_MS, async () => {
       const [owned, shared] = await Promise.all([
         searchObjects<FolderRow>("OrbitFolders", {
-          where: { type: "eq", field: "createdBy", value: user },
+          // case-insensitive (term match); over-matches rejected below
+          where: emailWhere("createdBy", user),
           // thousands of sync-managed folders on the real tenant — one page
           pageSize: 10_000,
         }),
@@ -236,7 +258,10 @@ export async function getAccessibleFolders(userEmail: string): Promise<FolderRow
       ])
       const seen = new Set<string>()
       const folders: FolderRow[] = []
-      for (const folder of [...owned, ...shared]) {
+      for (const folder of [
+        ...owned.filter((f) => sameEmail(f.createdBy, user)),
+        ...shared,
+      ]) {
         const id = pk(folder)
         if (!id || seen.has(id)) continue
         seen.add(id)
@@ -355,6 +380,30 @@ const DOC_LIST_FIELDS = [
 
 /** PoC /api/docs default response cap. */
 const DOC_LIST_LIMIT = 200
+/** Ceiling on docs pulled in via user-folder contents (defensive bound). */
+const FOLDER_DOCS_CAP = 2_000
+
+/** Map doc pk -> names of the (non-sync-managed) folders containing it. */
+function folderMembership(folders: FolderRow[]): {
+  sharedFolderNames: Map<string, string[]>
+  folderDocIds: Set<string>
+} {
+  const sharedFolderNames = new Map<string, string[]>()
+  const folderDocIds = new Set<string>()
+  // Sync-managed folders keep docs *accessible* but their membership is
+  // organizational noise (and their contents can be enormous) — only real
+  // user folders drive Library grouping and eager fetching.
+  for (const folder of folders.filter((f) => !f.isSyncManaged)) {
+    for (const docId of folder.contents ?? []) {
+      const id = String(docId)
+      folderDocIds.add(id)
+      const names = sharedFolderNames.get(id) ?? []
+      names.push(folder.name ?? "Folder")
+      sharedFolderNames.set(id, names)
+    }
+  }
+  return { sharedFolderNames, folderDocIds }
+}
 
 /**
  * Owned docs + docs shared via accessible folders (PoC /api/docs).
@@ -363,6 +412,11 @@ const DOC_LIST_LIMIT = 200
  * against the real tenant (~19k active docs for one user) that is dozens of
  * pages per request. We push the sort + cap upstream instead: one
  * `orderBy createdAt desc` page of `limit` rows (verified live).
+ *
+ * The `limit` applies to the rolling window of RAW documents (outside user
+ * folders). Every document inside an accessible user folder is always
+ * fetched and returned (bounded by FOLDER_DOCS_CAP), so folders are never
+ * empty just because their files are older than the window.
  */
 export async function listAccessibleDocs(
   userEmail: string,
@@ -377,7 +431,8 @@ export async function listAccessibleDocs(
     where: {
       type: "and",
       value: [
-        { type: "eq", field: "addedBy", value: user },
+        // case-insensitive (term match); over-matches rejected below
+        emailWhere("addedBy", user),
         { type: "eq", field: "isActive", value: true },
       ],
     },
@@ -385,7 +440,7 @@ export async function listAccessibleDocs(
     select: DOC_LIST_FIELDS,
     pageSize: limit,
   })
-  const ownedDocs = ownedPage.data
+  const ownedDocs = ownedPage.data.filter((d) => sameEmail(d.addedBy, user))
   // Warm the per-doc status cache while the (slower) folder scan finishes —
   // the final getIndexStatusForDocs below then only fetches folder-shared
   // stragglers.
@@ -393,27 +448,20 @@ export async function listAccessibleDocs(
     () => undefined
   )
   const folders = await foldersPromise
-
-  const sharedFolderNames = new Map<string, string[]>()
-  const folderDocIds = new Set<string>()
-  for (const folder of folders) {
-    for (const docId of folder.contents ?? []) {
-      const id = String(docId)
-      folderDocIds.add(id)
-      const names = sharedFolderNames.get(id) ?? []
-      names.push(folder.name ?? "Folder")
-      sharedFolderNames.set(id, names)
-    }
-  }
+  const { sharedFolderNames, folderDocIds } = folderMembership(folders)
 
   const docsById = new Map<string, DocRow>()
   for (const doc of ownedDocs) docsById.set(pk(doc), doc)
-  const missingShared = [...folderDocIds].filter((id) => !docsById.has(id))
-  if (missingShared.length > 0) {
+  // Fetch EVERY user-folder doc not already in the owned window — own files
+  // older than the window and files shared by other users alike.
+  const missingFolderDocs = [...folderDocIds]
+    .filter((id) => !docsById.has(id))
+    .slice(0, FOLDER_DOCS_CAP)
+  if (missingFolderDocs.length > 0) {
     const shared = await getObjectsByIds<DocRow>(
       "OrbitDocsList",
       "primaryKey_",
-      missingShared
+      missingFolderDocs
     )
     for (const [id, doc] of shared) {
       if (doc.isActive !== false) docsById.set(id, doc)
@@ -424,9 +472,14 @@ export async function listAccessibleDocs(
   if (!includeSynced) {
     docs = docs.filter((d) => !(d.sourceType ?? "").trim())
   }
-  docs.sort((a, b) => byCreatedAt(b, a))
-  // Re-cap after merging folder-shared docs (PoC sorts then slices to limit).
-  docs = docs.slice(0, limit)
+  // Cap the raw window only — folder members always survive, so the Library
+  // tree shows complete folders plus the newest `limit` loose files.
+  const rawDocs = docs
+    .filter((d) => !folderDocIds.has(pk(d)))
+    .sort((a, b) => byCreatedAt(b, a))
+    .slice(0, limit)
+  const folderDocs = docs.filter((d) => folderDocIds.has(pk(d)))
+  docs = [...folderDocs, ...rawDocs].sort((a, b) => byCreatedAt(b, a))
   // Status only for the docs we actually return — not the whole 21k-row table.
   await ownedStatusWarm
   const indexStatus = await getIndexStatusForDocs(docs.map(pk))
@@ -458,7 +511,8 @@ export async function searchAccessibleDocs(
     where: {
       type: "and",
       value: [
-        { type: "eq", field: "addedBy", value: user },
+        // case-insensitive (term match); over-matches rejected below
+        emailWhere("addedBy", user),
         { type: "eq", field: "isActive", value: true },
         { type: "containsAllTerms", field: "documentName", value: q },
       ],
@@ -468,21 +522,12 @@ export async function searchAccessibleDocs(
     pageSize: limit,
   })
   const folders = await foldersPromise
-
-  const sharedFolderNames = new Map<string, string[]>()
-  const folderDocIds = new Set<string>()
-  for (const folder of folders) {
-    for (const docId of folder.contents ?? []) {
-      const id = String(docId)
-      folderDocIds.add(id)
-      const names = sharedFolderNames.get(id) ?? []
-      names.push(folder.name ?? "Folder")
-      sharedFolderNames.set(id, names)
-    }
-  }
+  const { sharedFolderNames, folderDocIds } = folderMembership(folders)
 
   const docsById = new Map<string, DocRow>()
-  for (const doc of ownedPage.data) docsById.set(pk(doc), doc)
+  for (const doc of ownedPage.data.filter((d) => sameEmail(d.addedBy, user))) {
+    docsById.set(pk(doc), doc)
+  }
 
   // Folder-shared docs can't be term-searched upstream (no addedBy filter
   // would over-match); fetch the bounded shared set and substring-match.
@@ -632,13 +677,14 @@ const SESSION_LIST_FIELDS = [
 
 export async function listSessions(userEmail: string): Promise<SessionRow[]> {
   const rows = await searchObjects<SessionRow>("OrbitDocsUserSessions", {
-    where: { type: "eq", field: "user", value: normalizeEmail(userEmail) },
+    // case-insensitive (term match); over-matches rejected below
+    where: emailWhere("user", userEmail),
     pageSize: 1000,
     select: SESSION_LIST_FIELDS,
   })
   // isDeleted is nullable — NULL means active, so filter in JS (PoC behavior)
   return rows
-    .filter((row) => !row.isDeleted)
+    .filter((row) => !row.isDeleted && sameEmail(row.user, userEmail))
     .sort((a, b) => {
       const ta = a.updatedAt ?? a.createdAt ?? ""
       const tb = b.updatedAt ?? b.createdAt ?? ""
@@ -652,7 +698,7 @@ export async function getSessionRow(
 ): Promise<SessionRow | null> {
   const row = await getObject<SessionRow>("OrbitDocsUserSessions", sessionId)
   if (!row || row.isDeleted) return null
-  if (normalizeEmail(row.user) !== normalizeEmail(userEmail)) return null
+  if (!sameEmail(row.user, userEmail)) return null
   return row
 }
 
@@ -898,12 +944,13 @@ export function normalizeChatFolderColor(
 
 export async function listChatFolders(userEmail: string): Promise<ChatFolderRow[]> {
   const rows = await searchObjects<ChatFolderRow>("OrbitChatFolders", {
-    where: { type: "eq", field: "createdBy", value: normalizeEmail(userEmail) },
+    // case-insensitive (term match); over-matches rejected below
+    where: emailWhere("createdBy", userEmail),
     pageSize: 1000,
   })
   // isDeleted is nullable — NULL means active, so filter in JS (PoC quirk).
   return rows
-    .filter((row) => !row.isDeleted)
+    .filter((row) => !row.isDeleted && sameEmail(row.createdBy, userEmail))
     .sort((a, b) => (a.name ?? "").toLowerCase().localeCompare((b.name ?? "").toLowerCase()))
 }
 
@@ -1186,6 +1233,7 @@ export function serializeSyncSource(row: SyncSourceRow) {
     errorCount: row.errorCount ?? 0,
     sourceWebUrl: row.sourceWebUrl ?? null,
     ownerEmail: normalizeEmail(row.ownerEmail),
+    sharedWith: (row.sharedWith ?? []).map(normalizeEmail).filter(Boolean),
   }
 }
 

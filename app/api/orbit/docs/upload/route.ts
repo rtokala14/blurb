@@ -3,6 +3,7 @@ import { PDFDocument } from "pdf-lib"
 import { uploadMedia } from "@/lib/foundry/client"
 import {
   createDocRow,
+  emailWhere,
   normalizeEmail,
   type DocRow,
 } from "@/lib/foundry/ontology"
@@ -61,12 +62,13 @@ export async function POST(request: Request) {
       where: {
         type: "and",
         value: [
-          { type: "eq", field: "addedBy", value: normalizeEmail(userEmail) },
+          // case-insensitive owner match (mixed-case addedBy rows exist)
+          emailWhere("addedBy", userEmail),
           { type: "eq", field: "isActive", value: true },
           { type: "in", field: "documentName", value: requestedNames },
         ],
       },
-      select: ["documentName", "primaryKey_"],
+      select: ["documentName", "primaryKey_", "addedBy"],
     })
     const existingNames = new Set(
       existing.map((d) => (d.documentName ?? "").trim().toLowerCase())

@@ -78,6 +78,8 @@ export function mapLiveFolders(folders: LiveFolder[]): {
       name: folder.name,
       parentId: null,
       source: "upload" as const,
+      createdBy: folder.createdBy,
+      accessEmails: folder.accessEmails,
     }
   })
   return { folders: mapped, folderByDocId }
@@ -103,6 +105,9 @@ export function mapSyncSources(sources: LiveSyncSource[]): {
     docCount: 0,
     state: source.errorCount > 0 ? "attention" : "idle",
     attentionCount: source.errorCount,
+    ownerEmail: source.ownerEmail,
+    sharedWith: source.sharedWith ?? [],
+    isActive: source.isActive,
   }))
   return { folders, sites }
 }

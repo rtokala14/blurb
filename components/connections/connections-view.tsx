@@ -38,6 +38,7 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { LiveConnections } from "@/components/connections/live-connections"
 import { Separator } from "@/components/ui/separator"
 import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
@@ -52,6 +53,12 @@ const comingSoon = [
 ]
 
 export function ConnectionsView() {
+  const live = useOrbit((s) => s.live === true)
+  if (live) return <LiveConnections />
+  return <DemoConnectionsView />
+}
+
+function DemoConnectionsView() {
   const searchParams = useSearchParams()
   const sites = useOrbit((s) => s.sites)
   const folders = useOrbit((s) => s.folders)

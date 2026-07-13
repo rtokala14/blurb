@@ -104,6 +104,7 @@ export interface LiveSyncSource {
   errorCount: number
   sourceWebUrl: string | null
   ownerEmail: string
+  sharedWith?: string[]
 }
 
 export interface LiveChatFolder {
@@ -194,7 +195,10 @@ export const liveApi = {
       method: "POST",
       body: JSON.stringify(body),
     }),
-  updateFolder: (id: string, body: Partial<{ name: string; contents: string[] }>) =>
+  updateFolder: (
+    id: string,
+    body: Partial<{ name: string; contents: string[]; accessEmails: string[] }>
+  ) =>
     apiJson<LiveFolder>(`/api/orbit/folders/${encodeURIComponent(id)}`, {
       method: "PUT",
       body: JSON.stringify(body),
@@ -295,6 +299,11 @@ export const liveApi = {
   syncFolderDocs: (sourceId: string, path: string) =>
     apiJson<{ path: string; docPks: string[]; count: number }>(
       `/api/orbit/sync/sources/${encodeURIComponent(sourceId)}/folder-docs?path=${encodeURIComponent(path)}`
+    ),
+  updateSyncSourceShare: (sourceId: string, sharedWith: string[]) =>
+    apiJson<{ success: boolean; sharedWith: string[] }>(
+      `/api/orbit/sync/sources/${encodeURIComponent(sourceId)}/share`,
+      { method: "PUT", body: JSON.stringify({ sharedWith }) }
     ),
 }
 

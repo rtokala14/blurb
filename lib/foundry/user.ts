@@ -64,8 +64,11 @@ export function deriveNameFromEmail(email: string): string {
 }
 
 async function findUserByEmail(email: string): Promise<OrbitUserRow | null> {
+  // containsAllTerms is case-insensitive (the index lowercases terms); a
+  // plain eq would miss a mixed-case row and auto-provision a duplicate
+  // user with default limits — the classic "permission error".
   const rows = await searchObjects<OrbitUserRow>("OrbitDocsUser", {
-    where: { type: "eq", field: "email", value: email },
+    where: { type: "containsAllTerms", field: "email", value: email },
     pageSize: 10,
   })
   return rows.find((row) => normalizeEmail(row.email) === email) ?? null

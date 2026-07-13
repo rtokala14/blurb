@@ -16,11 +16,13 @@ import {
   Search,
   Trash2,
   Upload,
+  Users,
 } from "lucide-react"
 import { toast } from "sonner"
 
 import { DocIcon, docTypeLabel } from "@/components/doc-icon"
 import { DocPreviewSheet } from "@/components/documents/doc-preview-sheet"
+import { ShareDialog } from "@/components/share-dialog"
 import { adoptSearchResult, useLiveDocSearch } from "@/hooks/use-live-doc-search"
 import { loadMoreLiveDocs } from "@/components/live-provider"
 import { liveApi } from "@/lib/live-api"
@@ -134,7 +136,10 @@ export function DocumentsView() {
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set())
   const [docWindow, setDocWindow] = React.useState(200)
   const [loadingMore, setLoadingMore] = React.useState(false)
+  const [shareOpen, setShareOpen] = React.useState(false)
   const live = useOrbit((s) => s.live === true)
+  const liveUserEmail = useOrbit((s) => (s.liveUserEmail ?? "").toLowerCase())
+  const patchFolder = useOrbit((s) => s.patchFolder)
 
   const toggleSelected = (id: string) =>
     setSelectedIds((prev) => {
@@ -186,15 +191,108 @@ export function DocumentsView() {
     }
   }
 
-  /* deep links: /documents?upload=1 and /documents?doc=<id> */
+  /* deep links: /documents?upload=1, ?doc=<id>, ?folder=<id> */
   React.useEffect(() => {
     if (searchParams.get("upload")) setUploadOpen(true)
     const docParam = searchParams.get("doc")
     if (docParam) setPreviewDocId(docParam)
+    const folderParam = searchParams.get("folder")
+    if (folderParam) setCurrentFolderId(folderParam)
   }, [searchParams])
 
   const currentFolder = folders.find((f) => f.id === currentFolderId)
   const site = sites.find((s) => s.mappedFolderId === currentFolderId)
+
+  /** Create a folder — real OrbitFolders row in live mode, local in demo. */
+  const createNewFolder = async () => {
+    const name = newFolderName.trim()
+    if (!name) return
+    if (live) {
+      try {
+        const created = await liveApi.createFolder({ name })
+        addFolder({
+          id: created.primaryKey,
+          name: created.name,
+          parentId: null,
+          source: "upload",
+          createdBy: created.createdBy,
+          accessEmails: created.accessEmails,
+        })
+        toast.success("Folder created", { description: name })
+      } catch (error) {
+        toast.error("Couldn't create the folder", {
+          description: error instanceof Error ? error.message : undefined,
+        })
+        return
+      }
+    } else {
+      addFolder({
+        id: uid("f"),
+        name,
+        parentId: currentFolder?.source === "upload" ? currentFolder.id : null,
+        source: "upload",
+      })
+      toast.success("Folder created")
+    }
+    setNewFolderName("")
+    setNewFolderOpen(false)
+  }
+
+  /** Move a doc between folders (null = out of any folder), persisted live. */
+  const moveDocToFolder = async (doc: Doc, folderId: string | null) => {
+    if (!live) {
+      updateDoc(doc.id, { folderId })
+      toast(folderId ? "Moved" : "Removed from folder", { description: doc.name })
+      return
+    }
+    try {
+      const { data } = await liveApi.folders()
+      const containing = data.filter((f) => f.contents.includes(doc.id))
+      for (const f of containing.filter((f) => f.primaryKey !== folderId)) {
+        await liveApi.updateFolder(f.primaryKey, {
+          contents: f.contents.filter((id) => id !== doc.id),
+        })
+      }
+      if (folderId && !containing.some((f) => f.primaryKey === folderId)) {
+        const target = data.find((f) => f.primaryKey === folderId)
+        if (!target) throw new Error("Folder not found")
+        await liveApi.updateFolder(folderId, {
+          contents: [...new Set([...target.contents, doc.id])],
+        })
+      }
+      updateDoc(doc.id, { folderId })
+      toast(
+        folderId
+          ? `Moved to ${folders.find((f) => f.id === folderId)?.name ?? "folder"}`
+          : "Removed from folder",
+        { description: doc.name }
+      )
+    } catch (error) {
+      toast.error("Couldn't move the document", {
+        description: error instanceof Error ? error.message : undefined,
+      })
+    }
+  }
+
+  const canShareCurrentFolder =
+    live &&
+    currentFolder &&
+    currentFolder.source === "upload" &&
+    (currentFolder.createdBy ?? "").toLowerCase() === liveUserEmail
+
+  const saveFolderShare = async (emails: string[]) => {
+    if (!currentFolder) return
+    const creator = (currentFolder.createdBy ?? liveUserEmail).toLowerCase()
+    const accessEmails = [creator, ...emails.filter((e) => e !== creator)]
+    await liveApi.updateFolder(currentFolder.id, { accessEmails })
+    patchFolder(currentFolder.id, { accessEmails })
+    toast.success("Folder sharing updated", {
+      description:
+        emails.length === 0
+          ? "Only you can see this folder now."
+          : `Shared with ${emails.length} ${emails.length === 1 ? "person" : "people"}.`,
+    })
+  }
 
   const descendantIds = React.useMemo(() => {
     if (!currentFolderId) return null
@@ -272,26 +370,30 @@ export function DocumentsView() {
       >
         <Link2 /> Copy link
       </ContextMenuItem>
-      <ContextMenuSub>
-        <ContextMenuSubTrigger>
-          <FolderInput className="text-muted-foreground mr-2 size-4" /> Move to
-        </ContextMenuSubTrigger>
-        <ContextMenuSubContent>
-          {folders
-            .filter((f) => f.source === "upload" && f.id !== doc.folderId)
-            .map((f) => (
-              <ContextMenuItem
-                key={f.id}
-                onClick={() => {
-                  updateDoc(doc.id, { folderId: f.id })
-                  toast(`Moved to ${f.name}`, { description: doc.name })
-                }}
-              >
-                {f.name}
+      {doc.source !== "sharepoint" && (
+        <ContextMenuSub>
+          <ContextMenuSubTrigger>
+            <FolderInput className="text-muted-foreground mr-2 size-4" /> Move to
+          </ContextMenuSubTrigger>
+          <ContextMenuSubContent>
+            {doc.folderId && (
+              <ContextMenuItem onClick={() => void moveDocToFolder(doc, null)}>
+                Library (no folder)
               </ContextMenuItem>
-            ))}
-        </ContextMenuSubContent>
-      </ContextMenuSub>
+            )}
+            {folders
+              .filter((f) => f.source === "upload" && f.id !== doc.folderId)
+              .map((f) => (
+                <ContextMenuItem
+                  key={f.id}
+                  onClick={() => void moveDocToFolder(doc, f.id)}
+                >
+                  {f.name}
+                </ContextMenuItem>
+              ))}
+          </ContextMenuSubContent>
+        </ContextMenuSub>
+      )}
       <ContextMenuSeparator />
       <ContextMenuItem
         variant="destructive"
@@ -415,6 +517,20 @@ export function DocumentsView() {
                 <LayoutGrid />
               </ToggleGroupItem>
             </ToggleGroup>
+            {canShareCurrentFolder && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShareOpen(true)}
+              >
+                <Users />
+                <span className="hidden sm:inline">
+                  Share
+                  {(currentFolder?.accessEmails?.length ?? 1) > 1 &&
+                    ` (${(currentFolder?.accessEmails?.length ?? 1) - 1})`}
+                </span>
+              </Button>
+            )}
             <Button
               variant="outline"
               size="sm"
@@ -669,6 +785,19 @@ export function DocumentsView() {
         open={previewDocId !== null}
         onOpenChange={(open) => !open && setPreviewDocId(null)}
       />
+      {currentFolder && (
+        <ShareDialog
+          open={shareOpen}
+          onOpenChange={setShareOpen}
+          title={`Share “${currentFolder.name}”`}
+          description="People you add can see every document in this folder and use it to ground their chats. Email matching is case-insensitive."
+          ownerEmail={currentFolder.createdBy ?? liveUserEmail}
+          emails={(currentFolder.accessEmails ?? []).filter(
+            (e) => e.toLowerCase() !== (currentFolder.createdBy ?? liveUserEmail).toLowerCase()
+          )}
+          onSave={saveFolderShare}
+        />
+      )}
 
       {/* New folder dialog */}
       <Dialog open={newFolderOpen} onOpenChange={setNewFolderOpen}>
@@ -690,15 +819,7 @@ export function DocumentsView() {
             onChange={(e) => setNewFolderName(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && newFolderName.trim()) {
-                addFolder({
-                  id: uid("f"),
-                  name: newFolderName.trim(),
-                  parentId:
-                    currentFolder?.source === "upload" ? currentFolder.id : null,
-                  source: "upload",
-                })
-                setNewFolderName("")
-                setNewFolderOpen(false)
+                void createNewFolder()
               }
             }}
           />
@@ -708,18 +829,7 @@ export function DocumentsView() {
             </Button>
             <Button
               disabled={!newFolderName.trim()}
-              onClick={() => {
-                addFolder({
-                  id: uid("f"),
-                  name: newFolderName.trim(),
-                  parentId:
-                    currentFolder?.source === "upload" ? currentFolder.id : null,
-                  source: "upload",
-                })
-                setNewFolderName("")
-                setNewFolderOpen(false)
-                toast.success("Folder created")
-              }}
+              onClick={() => void createNewFolder()}
             >
               Create
             </Button>

@@ -23,6 +23,10 @@ export interface DocFolder {
   parentId: string | null
   source: DocSource
   sharePointPath?: string
+  /** live mode: folder creator (share management is creator-only) */
+  createdBy?: string
+  /** live mode: emails with access (includes the creator) */
+  accessEmails?: string[]
 }
 
 export interface Doc {
@@ -202,6 +206,12 @@ export interface SharePointSite {
   state: SyncState
   /** number of items needing review (conflicts, permission changes) */
   attentionCount: number
+  /** live mode: sync source owner (share management is owner-only) */
+  ownerEmail?: string
+  /** live mode: emails this source is shared with (owner excluded) */
+  sharedWith?: string[]
+  /** live mode: source is enabled on Foundry */
+  isActive?: boolean
 }
 
 /* ------------------------------------------------------------------ */
