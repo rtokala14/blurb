@@ -61,13 +61,25 @@ const GROUNDING_RULES = `Grounding rules (mandatory):
  * so the skill (plus any persona) cannot crowd out document context.
  */
 export function buildDocSkillPrompt(skill: DocSkill): string {
+  const structureLines =
+    skill.structure.length > 0
+      ? [
+          "Required structure, in this order (rename section titles only if the brief demands it):",
+          ...skill.structure.map((s, i) => `  ${i + 1}. ${s}`),
+        ]
+      : [
+          "Structure: derive a clear, professional section structure from the brief — " +
+            'numbered "##" sections in a logical order for the document the user asked for. ' +
+            "Front-load what the reader needs to act on.",
+        ]
   const block = [
     "<doc-skill>",
-    `You are drafting a professional ${skill.name} for Jacobs, an AEC consultancy.`,
+    skill.structure.length > 0
+      ? `You are drafting a professional ${skill.name} for Jacobs, an AEC consultancy.`
+      : "You are drafting a professional document for Jacobs, an AEC consultancy. The brief defines what kind of document it is.",
     "The user's message below is the drafting brief.",
     "",
-    "Required structure, in this order (rename section titles only if the brief demands it):",
-    ...skill.structure.map((s, i) => `  ${i + 1}. ${s}`),
+    ...structureLines,
     "",
     skill.guidance,
     "",
@@ -85,7 +97,7 @@ export function buildDocSkillPrompt(skill: DocSkill): string {
 }
 
 /* ------------------------------------------------------------------ */
-/* The seven built-in document skills                                    */
+/* Built-in document skills (7 typed + free-form Custom)                 */
 /* ------------------------------------------------------------------ */
 
 export const DOC_SKILLS: DocSkill[] = [
@@ -259,6 +271,26 @@ export const DOC_SKILLS: DocSkill[] = [
     ],
     briefPlaceholder:
       "e.g. Draft the quality management section responding to schedule 4 requirements",
+  },
+  {
+    id: "custom",
+    name: "Custom Document",
+    icon: "sparkles",
+    summary: "Other / free-form — describe any document; structure follows your brief.",
+    /** empty = the agent derives the structure from the brief */
+    structure: [],
+    guidance:
+      "Professional register matched to the document the brief describes. " +
+      "Prefer tables for comparable values, callouts for risks and required " +
+      "actions. Be as long as the brief demands and no longer.",
+    antiPatterns: [
+      "Padding with generic content the brief did not ask for",
+      "Marketing language or unverifiable superlatives",
+      "Ignoring an explicit structure the brief specifies",
+      "Skipping citations because the format is free-form",
+    ],
+    briefPlaceholder:
+      "e.g. Draft a two-page handover note for the incoming site team covering open WIRs and pending approvals",
   },
 ]
 

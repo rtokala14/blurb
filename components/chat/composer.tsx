@@ -13,6 +13,7 @@ import {
   FolderSearch,
   MessageSquareReply,
   Presentation,
+  Sparkles,
   Square,
   TrendingUp,
   Trophy,
@@ -44,6 +45,7 @@ const SKILL_ICONS: Record<string, LucideIcon> = {
   "clipboard-check": ClipboardCheck,
   "trending-up": TrendingUp,
   trophy: Trophy,
+  sparkles: Sparkles,
 }
 
 const slashCommands = [
@@ -103,6 +105,7 @@ export function Composer({
       !skillQuery ||
       s.name.toLowerCase().includes(skillQuery) ||
       s.id.includes(skillQuery) ||
+      s.summary.toLowerCase().includes(skillQuery) ||
       "doc".startsWith(skillQuery)
   )
 

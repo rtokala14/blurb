@@ -290,16 +290,29 @@ describe("model helpers", () => {
 /* ------------------------------------------------------------------ */
 
 describe("doc skills", () => {
-  test("seven skills with unique ids and complete fields", () => {
-    expect(DOC_SKILLS).toHaveLength(7)
+  test("seven typed skills + free-form Custom, unique ids, complete fields", () => {
+    expect(DOC_SKILLS).toHaveLength(8)
     const ids = new Set(DOC_SKILLS.map((s) => s.id))
-    expect(ids.size).toBe(7)
+    expect(ids.size).toBe(8)
     for (const skill of DOC_SKILLS) {
-      expect(skill.structure.length).toBeGreaterThanOrEqual(4)
+      // Custom is free-form: the agent derives the structure from the brief
+      if (skill.id === "custom") expect(skill.structure).toHaveLength(0)
+      else expect(skill.structure.length).toBeGreaterThanOrEqual(4)
       expect(skill.antiPatterns.length).toBeGreaterThanOrEqual(3)
       expect(skill.guidance.length).toBeGreaterThan(40)
       expect(skill.briefPlaceholder.startsWith("e.g.")).toBe(true)
     }
+  })
+
+  test("custom skill prompt derives structure but keeps envelope + grounding", () => {
+    const custom = getDocSkill("custom")!
+    const prompt = buildDocSkillPrompt(custom)
+    expect(prompt).toContain("derive a clear, professional section structure")
+    expect(prompt).not.toContain("Required structure, in this order")
+    expect(prompt).toContain("orbit-doc")
+    expect(prompt).toContain('"docType": "custom"')
+    expect(prompt).toContain("[TO CONFIRM")
+    expect(prompt).toContain("Never mention colors")
   })
 
   test("prompt carries structure contract, envelope spec and grounding", () => {

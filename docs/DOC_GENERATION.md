@@ -297,6 +297,9 @@ lines, authored the way the personas were):
 7. **Proposal Section** — win-theme-aware but evidence-first; compliance with
    the stated requirement structure; anti-pattern: unverifiable superlatives
    (composes with the Proposals persona).
+8. **Custom Document** — free-form escape hatch: no structure contract; the
+   agent derives numbered sections from the brief. Everything else holds —
+   envelope format, grounding rules, `[TO CONFIRM]` placeholders, branding.
 
 ### Composition with personas
 
