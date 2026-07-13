@@ -160,6 +160,8 @@ export interface ChatSession {
   chatFolderId?: string | null
   /** live mode: "regular" | "thinking" — the agent used for new turns */
   mode?: string
+  /** built-in persona attached to this session (null = none) */
+  personaId?: string | null
 }
 
 /** Private folder for organizing chat sessions (live mode). */

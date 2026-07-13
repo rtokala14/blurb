@@ -146,6 +146,12 @@ export interface TurnRequest {
   compactContext: string
 }
 
+/** Prepend a persona preamble ahead of the turn input (blank → unchanged). */
+function withPersona(preamble: string | undefined, input: string): string {
+  const trimmed = (preamble ?? "").trim()
+  return trimmed ? `${trimmed}\n\n${input}` : input
+}
+
 export function prepareTurnRequest({
   mode,
   summary,
@@ -156,6 +162,7 @@ export function prepareTurnRequest({
   agents,
   pinnedAgentRid,
   pinnedAgentVersion,
+  personaPreamble,
 }: {
   mode: string
   summary: string | null | undefined
@@ -167,6 +174,8 @@ export function prepareTurnRequest({
   /** session's current agent rid/version — version reused only if same agent */
   pinnedAgentRid?: string | null
   pinnedAgentVersion?: string | null
+  /** optional persona system-preamble, prepended ahead of the input */
+  personaPreamble?: string
 }): TurnRequest {
   const normalizedMode = normalizeMode(mode)
   const compactContext = buildCompactContext(summary, persistedMessages)
@@ -183,13 +192,17 @@ export function prepareTurnRequest({
       ? pinnedAgentVersion
       : null
 
+  // The persona preamble frames the turn; document scope (parameterInputs)
+  // stays orthogonal. Sources still win — the preamble carries that clause.
+  const baseInput =
+    normalizedMode === THINKING_MODE
+      ? userInput.trim()
+      : wrapRegularModePrompt(compactContext, userInput)
+
   return {
     agentRid: targetAgentRid,
     agentVersion,
-    userInput:
-      normalizedMode === THINKING_MODE
-        ? userInput.trim()
-        : wrapRegularModePrompt(compactContext, userInput),
+    userInput: withPersona(personaPreamble, baseInput),
     parameterInputs,
     compactContext,
   }

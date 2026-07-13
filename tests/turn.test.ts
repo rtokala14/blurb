@@ -130,6 +130,49 @@ describe("prepareTurnRequest", () => {
     expect(turn.userInput).toBe("deep question")
   })
 
+  test("prepends the persona preamble in regular mode, ahead of the wrapped input", () => {
+    const turn = prepareTurnRequest({
+      mode: "regular",
+      summary: null,
+      persistedMessages: [],
+      userInput: "next",
+      userDocs: ["d1"],
+      ontology: "o",
+      agents: AGENTS,
+      personaPreamble: "<persona>ACT AS X</persona>",
+    })
+    expect(turn.userInput.startsWith("<persona>ACT AS X</persona>")).toBe(true)
+    expect(turn.userInput).toContain("next")
+  })
+
+  test("prepends the persona preamble in thinking mode, ahead of the raw input", () => {
+    const turn = prepareTurnRequest({
+      mode: "thinking",
+      summary: null,
+      persistedMessages: [],
+      userInput: "deep question",
+      userDocs: ["d1"],
+      ontology: "o",
+      agents: AGENTS,
+      personaPreamble: "<persona>ACT AS Y</persona>",
+    })
+    expect(turn.userInput).toBe("<persona>ACT AS Y</persona>\n\ndeep question")
+  })
+
+  test("no persona preamble leaves the input unchanged", () => {
+    const withEmpty = prepareTurnRequest({
+      mode: "regular",
+      summary: null,
+      persistedMessages: [],
+      userInput: "hi",
+      userDocs: ["d1"],
+      ontology: "o",
+      agents: AGENTS,
+      personaPreamble: "   ",
+    })
+    expect(withEmpty.userInput).toBe("hi")
+  })
+
   test("reuses pinned version only for the same agent", () => {
     const same = prepareTurnRequest({
       mode: "regular",

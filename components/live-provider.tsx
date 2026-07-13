@@ -11,7 +11,7 @@ import {
   mapLiveSession,
   mapSyncSources,
 } from "@/lib/live-map"
-import { useOrbit } from "@/lib/store"
+import { sessionPersonaFor, useOrbit } from "@/lib/store"
 
 const DOC_STATUS_POLL_MS = 30_000
 
@@ -30,7 +30,11 @@ export function hydrateFromBootstrap(data: LiveBootstrap) {
   useOrbit.getState().hydrateLive({
     docs,
     folders: [...folders, ...sync.folders],
-    sessions: data.sessions.map(mapLiveSession),
+    // restore each session's persona choice from client-side storage (v1)
+    sessions: data.sessions.map((s) => {
+      const session = mapLiveSession(s)
+      return { ...session, personaId: sessionPersonaFor(session.id) }
+    }),
     sites,
     chatFolders: (data.chatFolders ?? []).map(mapLiveChatFolder),
   })

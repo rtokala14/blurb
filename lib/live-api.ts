@@ -336,6 +336,7 @@ export async function streamTurn(
     branchId?: string | null
     messageId?: string
     sessionTraceId?: string
+    personaId?: string | null
   },
   callbacks: StreamTurnCallbacks,
   signal?: AbortSignal
@@ -351,6 +352,7 @@ export async function streamTurn(
         branchId: body.branchId ?? undefined,
         messageId: body.messageId ?? crypto.randomUUID(),
         sessionTraceId: body.sessionTraceId ?? crypto.randomUUID(),
+        personaId: body.personaId ?? undefined,
       }),
       signal,
     }

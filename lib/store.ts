@@ -32,6 +32,35 @@ export function uid(prefix: string) {
   return `${prefix}-${idCounter}-${Math.random().toString(36).slice(2, 7)}`
 }
 
+/* Persona choice persistence (v1 — no ontology column yet). Keyed by
+ * session rid in localStorage so the attachment survives a reload. */
+const PERSONA_STORE_KEY = "orbit.session-personas"
+
+function readSessionPersonas(): Record<string, string> {
+  if (typeof window === "undefined") return {}
+  try {
+    return JSON.parse(window.localStorage.getItem(PERSONA_STORE_KEY) || "{}")
+  } catch {
+    return {}
+  }
+}
+
+export function persistSessionPersona(id: string, personaId: string | null) {
+  if (typeof window === "undefined") return
+  const map = readSessionPersonas()
+  if (personaId) map[id] = personaId
+  else delete map[id]
+  try {
+    window.localStorage.setItem(PERSONA_STORE_KEY, JSON.stringify(map))
+  } catch {
+    /* storage full/blocked — persona still lives in the in-memory session */
+  }
+}
+
+export function sessionPersonaFor(id: string): string | null {
+  return readSessionPersonas()[id] ?? null
+}
+
 interface OrbitState {
   folders: DocFolder[]
   docs: Doc[]
@@ -92,6 +121,7 @@ interface OrbitState {
   deleteSession: (id: string) => void
   togglePinSession: (id: string) => void
   setSessionScope: (id: string, docIds: string[]) => void
+  setSessionPersona: (id: string, personaId: string | null) => void
   addMessage: (sessionId: string, message: ChatMessage, setAsLeaf?: boolean) => void
   updateMessage: (
     sessionId: string,
@@ -250,6 +280,17 @@ export const useOrbit = create<OrbitState>((set) => ({
       ),
     }))
     syncSessionScope(id, docIds)
+  },
+  setSessionPersona: (id, personaId) => {
+    set((s) => ({
+      sessions: s.sessions.map((x) =>
+        x.id === id ? { ...x, personaId } : x
+      ),
+    }))
+    // v1: no ontology column for the persona choice, so persist client-side
+    // (keyed by session rid) and echo it on each turn. Tier 2 moves this to
+    // OrbitDocsUserSessions so it survives a server-side transcript replay.
+    persistSessionPersona(id, personaId)
   },
   addMessage: (sessionId, message, setAsLeaf = true) =>
     set((s) => ({

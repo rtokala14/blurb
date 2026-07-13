@@ -14,6 +14,7 @@ import {
 } from "lucide-react"
 
 import { DocIcon } from "@/components/doc-icon"
+import { PersonaChip } from "@/components/chat/persona-picker"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Kbd } from "@/components/ui/kbd"
@@ -228,6 +229,7 @@ export function Composer({
                 </TooltipContent>
               </Tooltip>
             )}
+            {live && <PersonaChip sessionId={session.id} />}
             <span className="text-muted-foreground ml-auto mr-2 text-[11px] max-sm:hidden">
               <Kbd>↵</Kbd> send · <Kbd>⇧↵</Kbd> newline
             </span>

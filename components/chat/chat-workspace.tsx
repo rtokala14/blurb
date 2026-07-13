@@ -15,6 +15,8 @@ import {
 } from "lucide-react"
 
 import { Composer } from "@/components/chat/composer"
+import { PersonaPicker } from "@/components/chat/persona-picker"
+import { getBuiltinPersona } from "@/lib/personas"
 import { DocumentsPanel } from "@/components/chat/documents-panel"
 import { ExportDialog } from "@/components/chat/export-dialog"
 import { isEditableTarget } from "@/components/keyboard-shortcuts"
@@ -301,6 +303,8 @@ export function ChatWorkspace() {
                 </DropdownMenu>
               )}
 
+              <PersonaPicker sessionId={session.id} />
+
               {branches > 1 && (
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -384,8 +388,17 @@ export function ChatWorkspace() {
                         <FolderSearch /> Select documents
                       </Button>
                     )}
+                    {getBuiltinPersona(session.personaId) && (
+                      <p className="text-muted-foreground -mb-2 text-xs">
+                        Starter prompts for{" "}
+                        <span className="text-foreground font-medium">
+                          {getBuiltinPersona(session.personaId)!.name}
+                        </span>
+                      </p>
+                    )}
                     <div className="grid w-full max-w-lg grid-cols-1 gap-2">
-                      {suggestions.map((s) => (
+                      {(getBuiltinPersona(session.personaId)?.samplePrompts ??
+                        suggestions).map((s) => (
                         <button
                           key={s}
                           onClick={() => sim.send(s)}

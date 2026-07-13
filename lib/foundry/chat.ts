@@ -7,6 +7,7 @@ import {
   streamingContinue,
 } from "./client"
 import { getFoundryConfig } from "./config"
+import { personaPreambleForId } from "@/lib/personas"
 import {
   createBranchRow,
   createMessageRow,
@@ -45,6 +46,8 @@ export interface RunTurnParams {
   messageId?: string | null
   sessionTraceId?: string | null
   scopedDocIds: string[]
+  /** optional persona attached to this session (built-in registry id) */
+  personaId?: string | null
 }
 
 export interface RunTurnResult {
@@ -81,6 +84,7 @@ export async function runSessionTurn(params: RunTurnParams): Promise<RunTurnResu
     agents: { primary: cfg.agents.primary, thinking: cfg.agents.thinking },
     pinnedAgentRid: params.session.currentAgentRid,
     pinnedAgentVersion: params.session.currentAgentVersion,
+    personaPreamble: personaPreambleForId(params.personaId),
   })
 
   // AIP session creation is a slow network call independent of persistence —
