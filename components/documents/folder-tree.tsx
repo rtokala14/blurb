@@ -36,7 +36,7 @@ function FolderNode({
   const children = folders.filter((f) => f.parentId === folder.id)
   const count = docs.filter((d) => d.folderId === folder.id).length
   const active = currentFolderId === folder.id
-  const [open, setOpen] = React.useState(true)
+  const [open, setOpen] = React.useState(false)
 
   const Icon =
     folder.source === "sharepoint" ? Cloud : folder.source === "generated" ? Sparkles : active ? FolderOpen : Folder

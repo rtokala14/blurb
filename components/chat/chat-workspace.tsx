@@ -7,7 +7,6 @@ import {
   FileDown,
   FolderSearch,
   GitBranch,
-  ListTree,
   PanelRight,
   PenSquare,
   PencilLine,
@@ -49,6 +48,7 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable"
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   Tooltip,
   TooltipContent,
@@ -87,7 +87,6 @@ export function ChatWorkspace() {
 
   const isMobile = useIsMobile()
   const [contextOpen, setContextOpen] = React.useState(true)
-  const [turnsOpen, setTurnsOpen] = React.useState(true)
 
   /* give the Studio room when an artifact opens */
   React.useEffect(() => {
@@ -128,6 +127,26 @@ export function ChatWorkspace() {
   const branches = session ? countBranches(session) : 1
   const streamingContent = path.find((m) => m.phase !== "done")
 
+  /* A live session opened from the sidebar fetches its transcript lazily.
+     Until it lands, show a loading skeleton instead of the welcome state so
+     we don't flash the suggested prompts and then swap to the real thread. */
+  const loadingContent = Boolean(
+    session?.live && !session.contentLoaded && path.length === 0
+  )
+
+  /* On open (or once a lazily-loaded transcript lands), anchor to the latest
+     turn instead of the top. Runs when the session changes or loading ends. */
+  React.useEffect(() => {
+    const el = scrollRef.current
+    if (!el || loadingContent || path.length === 0) return
+    // wait for the transcript to paint before measuring scrollHeight
+    const id = requestAnimationFrame(() => {
+      el.scrollTop = el.scrollHeight
+    })
+    return () => cancelAnimationFrame(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.id, loadingContent])
+
   /* auto-scroll while streaming if the user is near the bottom */
   const contentLength = streamingContent?.content.length ?? -1
   const thinkingLength = streamingContent?.thinking?.length ?? -1
@@ -157,8 +176,8 @@ export function ChatWorkspace() {
     return () => observer.disconnect()
   }, [path.length, session?.id])
 
-  /* chat hotkeys: Esc stop · ⌘⇧E export · ⌘. docs panel · ⌥↑/↓ turns ·
-     type anywhere to focus the composer */
+  /* chat hotkeys: Esc stop · Ctrl+Shift+E export · Ctrl+. docs panel ·
+     Alt+↑/↓ turns · type anywhere to focus the composer */
   const hotkeyState = React.useRef({ sim, session, activeMessageId })
   React.useEffect(() => {
     hotkeyState.current = { sim, session, activeMessageId }
@@ -333,20 +352,6 @@ export function ChatWorkspace() {
                     <Button
                       variant="ghost"
                       size="icon-sm"
-                      className="max-sm:hidden"
-                      aria-label="Toggle turns navigator"
-                      onClick={() => setTurnsOpen((v) => !v)}
-                    >
-                      <ListTree />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>Turns navigator</TooltipContent>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
                       aria-label="Export session"
                       onClick={() => setExportOpen(true)}
                     >
@@ -376,7 +381,31 @@ export function ChatWorkspace() {
             {/* Messages + turns rail */}
             <div className="relative flex min-h-0 flex-1">
               <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
-                {path.length === 0 ? (
+                {loadingContent ? (
+                  <div className="mx-auto max-w-3xl space-y-8 px-4 py-6">
+                    {[0, 1, 2].map((i) => (
+                      <div key={i} className="space-y-4">
+                        {/* user bubble placeholder (right-aligned) */}
+                        <div className="flex justify-end">
+                          <Skeleton className="h-9 w-2/5 rounded-xl rounded-br-sm" />
+                        </div>
+                        {/* assistant response placeholder */}
+                        <div className="flex gap-3">
+                          <Skeleton className="size-7 shrink-0 rounded-full" />
+                          <div className="flex-1 space-y-2 pt-0.5">
+                            <Skeleton className="h-3.5 w-full" />
+                            <Skeleton className="h-3.5 w-11/12" />
+                            <Skeleton className="h-3.5 w-4/5" />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    <p className="text-muted-foreground flex items-center justify-center gap-2 pt-2 text-xs">
+                      <span className="bg-primary size-1.5 animate-pulse rounded-full" />
+                      Loading conversation…
+                    </p>
+                  </div>
+                ) : path.length === 0 ? (
                   <div className="flex h-full flex-col items-center justify-center gap-6 p-8">
                     <div className="text-center">
                       <div className="from-primary to-chart-1 text-primary-foreground mx-auto mb-4 flex size-12 items-center justify-center rounded-xl bg-gradient-to-br shadow-sm">
@@ -407,14 +436,14 @@ export function ChatWorkspace() {
                     <div className="grid w-full max-w-lg grid-cols-1 gap-2">
                       {(getBuiltinPersona(session.personaId)?.samplePrompts ??
                         (sim.live ? liveSuggestions : suggestions)).map((s) => (
-                        <button
-                          key={s}
-                          onClick={() => sim.send(s)}
-                          className="hover:bg-accent text-muted-foreground hover:text-foreground hover:border-ring/50 rounded-lg border px-3 py-2 text-left text-sm transition-colors"
-                        >
-                          {s}
-                        </button>
-                      ))}
+                          <button
+                            key={s}
+                            onClick={() => sim.send(s)}
+                            className="hover:bg-accent text-muted-foreground hover:text-foreground hover:border-ring/50 rounded-lg border px-3 py-2 text-left text-sm transition-colors"
+                          >
+                            {s}
+                          </button>
+                        ))}
                     </div>
                   </div>
                 ) : (
@@ -432,7 +461,7 @@ export function ChatWorkspace() {
                   </div>
                 )}
               </div>
-              {turnsOpen && path.length > 0 && (
+              {path.length > 0 && (
                 <TurnsNavigator
                   session={session}
                   activeMessageId={activeMessageId}

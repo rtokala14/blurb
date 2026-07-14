@@ -52,13 +52,13 @@ export function useLiveChat(sessionId: string) {
           const display =
             status === "COMPLETE"
               ? [
-                  ...steps,
-                  {
-                    id: "trace-writing",
-                    kind: "synthesize" as const,
-                    label: "Writing the response…",
-                  },
-                ]
+                ...steps,
+                {
+                  id: "trace-writing",
+                  kind: "synthesize" as const,
+                  label: "Writing the response…",
+                },
+              ]
               : steps
           if (display.length > 0) {
             useOrbit.getState().updateMessage(rid, assistantMessageId, (m) =>
@@ -127,9 +127,8 @@ export function useLiveChat(sessionId: string) {
         content: text,
         createdAt: new Date().toISOString(),
         phase: "sending",
-        scopeLabel: `${session.scopeDocIds.length} ${
-          session.scopeDocIds.length === 1 ? "document" : "documents"
-        } in scope`,
+        scopeLabel: `${session.scopeDocIds.length} ${session.scopeDocIds.length === 1 ? "document" : "documents"
+          } in scope`,
       })
       store.addMessage(rid, {
         id: assistantMessageId,
@@ -214,6 +213,12 @@ export function useLiveChat(sessionId: string) {
 
       const controller = new AbortController()
       abortRef.current = controller
+
+      // The turn is now dispatched to the server (the session exists and the
+      // assistant thinking indicator takes over). Confirm the user bubble as
+      // sent immediately rather than waiting for the first reply chunk —
+      // otherwise "Sending…" lingers through the entire thinking phase.
+      markUserSent()
 
       const sessionTraceId = crypto.randomUUID()
       const stopTracePolling = startTracePolling(rid, assistantMessageId, sessionTraceId)

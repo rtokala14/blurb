@@ -204,13 +204,13 @@ export function LiveDocEditor({
         artifact.versions && artifact.versions.length > 0
           ? artifact.versions
           : [
-              {
-                v: 1,
-                summary: "Initial AI draft",
-                at: artifact.createdAt,
-                markdown: serializeDocModel(model),
-              },
-            ]
+            {
+              v: 1,
+              summary: "Initial AI draft",
+              at: artifact.createdAt,
+              markdown: serializeDocModel(model),
+            },
+          ]
       const bumped: DocModel = {
         ...nextModel,
         meta: { ...nextModel.meta, revision: bumpRevision(model.meta.revision) },
@@ -460,7 +460,7 @@ export function LiveDocEditor({
                         Cancel
                       </Button>
                       <span className="text-muted-foreground text-[10px]">
-                        markdown · ⌘↵ to save · citations stay as ⟦n⟧
+                        markdown · Ctrl+Enter to save · citations stay as ⟦n⟧
                       </span>
                     </div>
                   </div>

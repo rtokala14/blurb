@@ -27,7 +27,6 @@ export function isEditableTarget(target: EventTarget | null): boolean {
 }
 
 const nav: [string, string][] = [
-  ["/", "Dashboard"],
   ["/chat", "Chat"],
   ["/documents", "Documents"],
   ["/studio", "Studio"],
@@ -43,11 +42,11 @@ const groups: { title: string; rows: ShortcutRow[] }[] = [
   {
     title: "Global",
     rows: [
-      { keys: ["⌘", "K"], label: "Command palette" },
-      { keys: ["⌘", "B"], label: "Toggle navigation sidebar" },
-      { keys: ["⌘", "1"], label: "Go to Dashboard (…⌘5 for Connections)" },
-      { keys: ["⌘", "⇧", "O"], label: "New chat session" },
-      { keys: ["⌘", "⇧", "U"], label: "Upload documents" },
+      { keys: ["Ctrl", "K"], label: "Command palette" },
+      { keys: ["Ctrl", "B"], label: "Toggle navigation sidebar" },
+      { keys: ["Ctrl", "1"], label: "Go to Chat (…Ctrl 4 for Connections)" },
+      { keys: ["Ctrl", "Shift", "O"], label: "New chat session" },
+      { keys: ["Ctrl", "Shift", "U"], label: "Upload documents" },
       { keys: ["?"], label: "Show this dialog" },
     ],
   },
@@ -58,16 +57,16 @@ const groups: { title: string; rows: ShortcutRow[] }[] = [
       { keys: ["⇧", "↵"], label: "New line" },
       { keys: ["/"], label: "Creation commands (/doc, /sheet, /deck)" },
       { keys: ["Esc"], label: "Stop generating" },
-      { keys: ["⌘", "."], label: "Toggle documents panel" },
-      { keys: ["⌘", "⇧", "E"], label: "Export session" },
-      { keys: ["⌥", "↑ ↓"], label: "Jump between turns" },
+      { keys: ["Ctrl", "."], label: "Toggle documents panel" },
+      { keys: ["Ctrl", "Shift", "E"], label: "Export session" },
+      { keys: ["Alt", "↑ ↓"], label: "Jump between turns" },
       { keys: ["A…Z"], label: "Start typing to focus the composer" },
     ],
   },
   {
     title: "Documents",
     rows: [
-      { keys: ["⌘", "K"], label: "Search documents from anywhere" },
+      { keys: ["Ctrl", "K"], label: "Search documents from anywhere" },
       { keys: ["→ click"], label: "Right-click a row for quick actions" },
     ],
   },
@@ -85,8 +84,8 @@ export function KeyboardShortcuts() {
     const onKeyDown = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey
 
-      /* ⌘1–⌘5 — page navigation */
-      if (mod && !e.shiftKey && !e.altKey && /^[1-5]$/.test(e.key)) {
+      /* ⌘1–⌘4 — page navigation */
+      if (mod && !e.shiftKey && !e.altKey && /^[1-4]$/.test(e.key)) {
         e.preventDefault()
         router.push(nav[Number(e.key) - 1][0])
         return
@@ -123,7 +122,7 @@ export function KeyboardShortcuts() {
         <DialogHeader>
           <DialogTitle>Keyboard shortcuts</DialogTitle>
           <DialogDescription>
-            Use Ctrl in place of ⌘ on Windows and Linux.
+            Shortcuts across the Orbit Docs workspace.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-5 sm:grid-cols-2">

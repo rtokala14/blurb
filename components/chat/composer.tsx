@@ -320,7 +320,7 @@ export function Composer({
               </Badge>
             )}
             <span className="text-muted-foreground ml-auto mr-2 text-[11px] max-sm:hidden">
-              <Kbd>↵</Kbd> send · <Kbd>⇧↵</Kbd> newline
+              <Kbd>Enter</Kbd> send · <Kbd>Shift+Enter</Kbd> newline
             </span>
             {isBusy ? (
               <Button

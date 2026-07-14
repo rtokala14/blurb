@@ -96,48 +96,56 @@
   --sidebar-ring: oklch(0.6 0.12 255);
 }
 
+/*
+ * Dark mode — clean "enterprise" cool-gray. Surfaces are near-neutral (very
+ * low chroma) so the UI reads as crisp slate rather than muddy navy. Elevation
+ * is expressed as small, deliberate lightness steps (bg → sidebar → card →
+ * secondary → accent). Blue is reserved as a bright, confident accent.
+ */
 .dark {
-  --background: oklch(0.16 0.02 255);
-  --foreground: oklch(0.96 0.005 250);
-  --card: oklch(0.205 0.022 255);
-  --card-foreground: oklch(0.96 0.005 250);
-  --popover: oklch(0.205 0.022 255);
-  --popover-foreground: oklch(0.96 0.005 250);
-  --primary: oklch(0.72 0.13 250);
-  --primary-foreground: oklch(0.15 0.04 255);
-  --secondary: oklch(0.27 0.022 255);
-  --secondary-foreground: oklch(0.96 0.005 250);
-  --muted: oklch(0.26 0.02 255);
-  --muted-foreground: oklch(0.7 0.015 250);
-  --accent: oklch(0.28 0.026 252);
-  --accent-foreground: oklch(0.96 0.005 250);
-  --destructive: oklch(0.704 0.191 22.216);
+  --background: oklch(0.185 0.006 255);
+  --foreground: oklch(0.97 0.003 250);
+  --card: oklch(0.225 0.007 255);
+  --card-foreground: oklch(0.97 0.003 250);
+  --popover: oklch(0.235 0.008 255);
+  --popover-foreground: oklch(0.97 0.003 250);
+  --primary: oklch(0.7 0.14 252);
+  --primary-foreground: oklch(0.16 0.03 255);
+  --secondary: oklch(0.27 0.008 255);
+  --secondary-foreground: oklch(0.95 0.004 250);
+  --muted: oklch(0.255 0.007 255);
+  --muted-foreground: oklch(0.72 0.012 250);
+  --accent: oklch(0.3 0.012 252);
+  --accent-foreground: oklch(0.97 0.003 250);
+  --destructive: oklch(0.68 0.19 24);
   --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.58 0.12 252);
-  --chart-1: oklch(0.72 0.13 250);
-  --chart-2: oklch(0.68 0.11 215);
-  --chart-3: oklch(0.5 0.1 255);
+  --border: oklch(1 0 0 / 9%);
+  --input: oklch(1 0 0 / 13%);
+  --ring: oklch(0.6 0.13 252);
+  --chart-1: oklch(0.72 0.14 252);
+  --chart-2: oklch(0.7 0.12 215);
+  --chart-3: oklch(0.55 0.1 255);
   --chart-4: oklch(0.78 0.1 200);
-  --chart-5: oklch(0.65 0.1 280);
-  --sidebar: oklch(0.19 0.022 255);
-  --sidebar-foreground: oklch(0.96 0.005 250);
-  --sidebar-primary: oklch(0.72 0.13 250);
-  --sidebar-primary-foreground: oklch(0.15 0.04 255);
-  --sidebar-accent: oklch(0.27 0.025 252);
-  --sidebar-accent-foreground: oklch(0.96 0.005 250);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.58 0.12 252);
+  --chart-5: oklch(0.66 0.11 280);
+  --sidebar: oklch(0.205 0.006 255);
+  --sidebar-foreground: oklch(0.97 0.003 250);
+  --sidebar-primary: oklch(0.7 0.14 252);
+  --sidebar-primary-foreground: oklch(0.16 0.03 255);
+  --sidebar-accent: oklch(0.285 0.01 252);
+  --sidebar-accent-foreground: oklch(0.97 0.003 250);
+  --sidebar-border: oklch(1 0 0 / 8%);
+  --sidebar-ring: oklch(0.6 0.13 252);
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
+
   body {
     @apply bg-background text-foreground;
   }
+
   ::selection {
     @apply bg-primary/15;
   }
@@ -149,10 +157,12 @@
 
 /* Streaming caret shown at the tail of an in-flight assistant message */
 @keyframes orbit-caret-blink {
+
   0%,
   100% {
     opacity: 1;
   }
+
   50% {
     opacity: 0.15;
   }
@@ -175,20 +185,19 @@
   0% {
     background-position: 150% 0;
   }
+
   100% {
     background-position: -50% 0;
   }
 }
 
 .thinking-shimmer {
-  background: linear-gradient(
-    90deg,
-    var(--muted-foreground) 0%,
-    var(--muted-foreground) 35%,
-    var(--foreground) 50%,
-    var(--muted-foreground) 65%,
-    var(--muted-foreground) 100%
-  );
+  background: linear-gradient(90deg,
+      var(--muted-foreground) 0%,
+      var(--muted-foreground) 35%,
+      var(--foreground) 50%,
+      var(--muted-foreground) 65%,
+      var(--muted-foreground) 100%);
   background-size: 200% 100%;
   -webkit-background-clip: text;
   background-clip: text;

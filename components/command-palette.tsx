@@ -6,7 +6,6 @@ import {
   Cable,
   FolderOpen,
   Keyboard,
-  LayoutDashboard,
   MessageSquareText,
   Moon,
   PenSquare,
@@ -76,14 +75,14 @@ export function CommandPalette({
           <CommandItem onSelect={() => run(() => createSession())}>
             <PenSquare />
             New chat session
-            <CommandShortcut>⌘⇧O</CommandShortcut>
+            <CommandShortcut>Ctrl+Shift+O</CommandShortcut>
           </CommandItem>
           <CommandItem
             onSelect={() => run(() => router.push("/documents?upload=1"))}
           >
             <Upload />
             Upload documents
-            <CommandShortcut>⌘⇧U</CommandShortcut>
+            <CommandShortcut>Ctrl+Shift+U</CommandShortcut>
           </CommandItem>
           <CommandItem
             onSelect={() => run(() => router.push("/connections?sync=1"))}
@@ -103,10 +102,6 @@ export function CommandPalette({
         </CommandGroup>
         <CommandSeparator />
         <CommandGroup heading="Go to">
-          <CommandItem onSelect={() => run(() => router.push("/"))}>
-            <LayoutDashboard />
-            Dashboard
-          </CommandItem>
           <CommandItem onSelect={() => run(() => router.push("/chat"))}>
             <MessageSquareText />
             Chat

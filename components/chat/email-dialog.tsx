@@ -28,6 +28,7 @@ import {
   ToggleGroup,
   ToggleGroupItem,
 } from "@/components/ui/toggle-group"
+import { buildMailto, markdownToPlainText } from "@/lib/format"
 import { liveApi } from "@/lib/live-api"
 import { cn } from "@/lib/utils"
 import { useOrbit } from "@/lib/store"
@@ -96,6 +97,7 @@ export function EmailDialog({
   )
 
   const [to, setTo] = React.useState("legal@jacobs.com")
+  const [cc, setCc] = React.useState("")
   const [subject, setSubject] = React.useState(`Summary: ${session.title}`)
   const [tone, setTone] = React.useState<Tone>("neutral")
   const [length, setLength] = React.useState<Length>("detailed")
@@ -127,6 +129,9 @@ export function EmailDialog({
     if (useOrbit.getState().live === true) {
       try {
         const { text } = await liveApi.refine({
+          // Email refining doesn't need doc grounding/citations — route it
+          // through the fast, model-flexible LLM proxy instead of the AIP query.
+          engine: "llm-proxy",
           userInput: message.content,
           toRefine: body || draftEmail(message, session, tone, length, citedDocNames),
           refineRequest:
@@ -161,23 +166,43 @@ export function EmailDialog({
     timers.current.push(interval)
   }
 
+  /**
+   * Hand off to the user's mail client (Outlook desktop, Outlook web handler,
+   * Apple Mail, …) via a `mailto:` link with the draft prefilled. The body is
+   * flattened to plain text since mailto bodies don't render markdown.
+   */
   const send = () => {
+    const href = buildMailto({
+      to,
+      cc,
+      subject,
+      body: markdownToPlainText(body),
+    })
+    // mailto: URLs can get long; most clients accept several thousand chars,
+    // but warn (and still try) if we're well past the safe window.
+    if (href.length > 8000) {
+      toast.warning("Draft is long", {
+        description:
+          "Some mail clients truncate very long messages — trim if needed.",
+      })
+    }
     setState("sending")
+    // Navigating the top window to a mailto: opens the OS mail handler without
+    // leaving the app (no blank tab, unlike window.open).
+    window.location.href = href
+    pushActivity({
+      kind: "share",
+      text: `Opened email draft to ${to}`,
+      detail: subject,
+    })
     timers.current.push(
       setTimeout(() => {
         setState("sent")
-        pushActivity({
-          kind: "share",
-          text: `Response sent as email to ${to}`,
-          detail: subject,
+        toast.success("Draft opened in your mail app", {
+          description: `${subject} → ${to}`,
         })
-        timers.current.push(
-          setTimeout(() => {
-            onOpenChange(false)
-            toast.success("Email sent", { description: `${subject} → ${to}` })
-          }, 900)
-        )
-      }, 1400)
+        timers.current.push(setTimeout(() => onOpenChange(false), 1200))
+      }, 400)
     )
   }
 
@@ -187,15 +212,18 @@ export function EmailDialog({
         <DialogHeader>
           <DialogTitle>Refine & send as email</DialogTitle>
           <DialogDescription>
-            Turn this response into a polished email. Citations become a source
-            list; the AI rewrites for your chosen tone.
+            Turn this response into a polished email, then open it in Outlook to
+            review and send. The AI rewrites for your chosen tone.
           </DialogDescription>
         </DialogHeader>
 
         {state === "sent" ? (
           <div className="flex flex-col items-center gap-3 py-10 text-center">
             <CheckCircle2 className="size-10 text-emerald-600 dark:text-emerald-400" />
-            <p className="text-sm font-medium">Sent to {to}</p>
+            <p className="text-sm font-medium">Opened in your mail app</p>
+            <p className="text-muted-foreground text-xs">
+              Review and send from Outlook to finish.
+            </p>
           </div>
         ) : (
           <>
@@ -210,6 +238,15 @@ export function EmailDialog({
                 />
               </div>
               <div className="space-y-1.5">
+                <Label htmlFor="email-cc">Cc</Label>
+                <Input
+                  id="email-cc"
+                  value={cc}
+                  onChange={(e) => setCc(e.target.value)}
+                  placeholder="optional"
+                />
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
                 <Label htmlFor="email-subject">Subject</Label>
                 <Input
                   id="email-subject"
@@ -276,7 +313,7 @@ export function EmailDialog({
               </Button>
               <Button onClick={send} disabled={state === "sending" || refining || !to}>
                 {state === "sending" ? <Spinner /> : <Mail />}
-                {state === "sending" ? "Sending…" : "Send email"}
+                {state === "sending" ? "Opening…" : "Open in Outlook"}
               </Button>
             </DialogFooter>
           </>

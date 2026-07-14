@@ -37,7 +37,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, [])
 
   const title =
-    titles.find(([prefix]) => pathname.startsWith(prefix))?.[1] ?? "Dashboard"
+    titles.find(([prefix]) => pathname.startsWith(prefix))?.[1] ?? "Chat"
 
   return (
     <SidebarProvider>
@@ -57,7 +57,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <SearchIcon className="size-4" />
               Search or jump to…
               <KbdGroup className="ml-auto">
-                <Kbd>⌘</Kbd>
+                <Kbd>Ctrl</Kbd>
                 <Kbd>K</Kbd>
               </KbdGroup>
             </Button>

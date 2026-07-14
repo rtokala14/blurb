@@ -178,10 +178,8 @@ export const liveApi = {
     if (!res.ok) {
       if (res.status === 409 && data.duplicates?.length) {
         throw new Error(
-          `Already in your library: ${data.duplicates.join(", ")}. Rename the ${
-            data.duplicates.length === 1 ? "file" : "files"
-          } or delete the existing ${
-            data.duplicates.length === 1 ? "copy" : "copies"
+          `Already in your library: ${data.duplicates.join(", ")}. Rename the ${data.duplicates.length === 1 ? "file" : "files"
+          } or delete the existing ${data.duplicates.length === 1 ? "copy" : "copies"
           } first.`
         )
       }
@@ -240,8 +238,7 @@ export const liveApi = {
       status: string
       steps: { id: string; kind: "search" | "read" | "analyze" | "tool"; label: string; detail?: string }[]
     }>(
-      `/api/orbit/sessions/${encodeURIComponent(rid)}/trace${
-        traceId ? `?traceId=${encodeURIComponent(traceId)}` : ""
+      `/api/orbit/sessions/${encodeURIComponent(rid)}/trace${traceId ? `?traceId=${encodeURIComponent(traceId)}` : ""
       }`
     ),
   createBranch: (rid: string, anchorMessageId: string, name?: string) =>
@@ -254,8 +251,16 @@ export const liveApi = {
       `/api/orbit/sessions/${encodeURIComponent(rid)}/branches/${encodeURIComponent(branchId)}/activate`,
       { method: "POST" }
     ),
-  refine: (body: { userInput: string; toRefine?: string; refineRequest?: string }) =>
-    apiJson<{ text: string }>("/api/orbit/refine", {
+  refine: (body: {
+    userInput: string
+    toRefine?: string
+    refineRequest?: string
+    /** "llm-proxy" for lightweight tasks; defaults to the ontology query */
+    engine?: "query" | "llm-proxy"
+    provider?: "openai" | "anthropic"
+    model?: string
+  }) =>
+    apiJson<{ text: string; engine?: string }>("/api/orbit/refine", {
       method: "POST",
       body: JSON.stringify(body),
     }),
@@ -386,7 +391,7 @@ export async function streamTurn(
   const mightBeSentinel = (text: string) =>
     STREAM_ERROR_PREFIX.startsWith(text) || text.startsWith(STREAM_ERROR_PREFIX)
 
-  for (;;) {
+  for (; ;) {
     const { done, value } = await reader.read()
     if (done) break
     accumulated += decoder.decode(value, { stream: true })

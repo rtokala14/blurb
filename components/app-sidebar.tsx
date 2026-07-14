@@ -11,7 +11,6 @@ import {
   FolderOpen,
   FolderPlus,
   FolderMinus,
-  LayoutDashboard,
   MessageSquareText,
   MoreHorizontal,
   Orbit,
@@ -66,7 +65,6 @@ import { cn } from "@/lib/utils"
 import type { ChatFolder, ChatSession } from "@/lib/types"
 
 const nav = [
-  { title: "Dashboard", href: "/", icon: LayoutDashboard },
   { title: "Chat", href: "/chat", icon: MessageSquareText },
   { title: "Documents", href: "/documents", icon: FolderOpen },
   { title: "Studio", href: "/studio", icon: Sparkles },
@@ -222,7 +220,7 @@ export function AppSidebar() {
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" asChild>
-              <Link href="/">
+              <Link href="/chat">
                 <div className="from-primary to-chart-1 text-primary-foreground flex aspect-square size-8 items-center justify-center rounded-lg bg-gradient-to-br">
                   <Orbit className="size-4" />
                 </div>

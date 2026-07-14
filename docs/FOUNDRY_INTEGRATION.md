@@ -37,9 +37,43 @@ parameter shape are encoded in `lib/foundry/`.
 | `config.ts` | reads env, decides live vs demo |
 | `token.ts` | OAuth2 client-credentials token cache (60s refresh margin, single-flight) |
 | `client.ts` | typed REST helpers: object search/get, action apply, query execute, AIP sessions, media set |
+| `llm-proxy.ts` | vendor-native LLM proxy client (OpenAI/Anthropic compatible) for lightweight text tasks |
 | `ontology.ts` | data layer + serializers, PoC access rules, 5s TTL caches |
 | `turn.ts` | **pure** turn preparation (agent choice, context, param inputs, stream-error sentinel) — unit-tested |
 | `chat.ts` | one agent turn end-to-end: persist → stream passthrough → persist reply + metadata |
+
+### LLM proxy (`llm-proxy.ts`)
+
+Foundry exposes provider-compatible endpoints under
+`{host}/api/v2/llm/proxy/{provider}/v1/…`, authenticated with the **same
+Foundry bearer token** used everywhere else:
+
+- **OpenAI:** `POST /openai/v1/chat/completions`
+- **Anthropic:** `POST /anthropic/v1/messages` (adds `anthropic-version` header;
+  system prompt is hoisted out of the `messages` array)
+
+`complete({ messages, provider?, model?, … })` normalizes both shapes and
+returns the assistant text. Provider/model default to the `llmProxy` block in
+`config.ts` (env-overridable), so swapping models is a config change — no code.
+
+This bypasses the AIP-session/ontology-query round-trip for tasks that don't
+need document grounding or citations. Main chat turns stay on AIP agents (which
+supply the `userDocs` grounding + inline citations), and Studio doc edits stay
+on the ontology **refining query** (prompted for the doc-envelope markdown +
+`<source>` tags). The **email refine** opts into the proxy per-request via
+`liveApi.refine({ engine: "llm-proxy", … })`.
+
+`POST /api/orbit/refine` picks the engine from the request body's `engine`
+field, falling back to `REFINE_ENGINE`, then `query`.
+
+**Env:**
+
+| Var | Default | Purpose |
+| --- | --- | --- |
+| `LLM_PROXY_PROVIDER` | `openai` | `openai` or `anthropic` |
+| `LLM_PROXY_MODEL` | `gpt-4o` / `claude-sonnet-4` | model id for the provider |
+| `LLM_PROXY_MAX_TOKENS` | `2048` | max completion tokens |
+| `REFINE_ENGINE` | `query` | default engine when a request omits `engine`; set to `llm-proxy` to flip the default |
 
 ## API routes (`app/api/orbit/`)
 

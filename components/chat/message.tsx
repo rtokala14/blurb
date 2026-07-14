@@ -3,6 +3,7 @@
 import * as React from "react"
 import {
   Check,
+  ChevronRight,
   Copy,
   Download,
   FileSearch,
@@ -28,6 +29,11 @@ import { LivePdfDialog } from "@/components/live-pdf-dialog"
 import { PdfViewerDialog } from "@/components/pdf-viewer-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible"
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -233,35 +239,40 @@ function MessageImpl({
           <ArtifactCard key={id} artifactId={id} />
         ))}
 
-        {/* Sources strip */}
+        {/* Sources strip — collapsed by default to save vertical space */}
         {message.phase === "done" && hasCitations && (
-          <div className="mt-3 flex flex-wrap items-center gap-1.5">
-            <span className="text-muted-foreground flex items-center gap-1 text-xs">
-              <FileSearch className="size-3" /> Sources:
-            </span>
-            {citations.map((c) => {
-              const doc = docs.find((d) => d.id === c.docId)
-              const name = doc?.name ?? c.docName
-              if (!name) return null
-              return (
-                <Badge
-                  key={c.n}
-                  variant="outline"
-                  className="hover:bg-muted max-w-64 cursor-pointer gap-1 font-normal"
-                  onClick={() => setOpenCitation(c)}
-                >
-                  <span className="bg-primary/10 text-primary flex size-3.5 items-center justify-center rounded-full text-[9px] font-semibold">
-                    {c.n}
-                  </span>
-                  {doc && <DocIcon type={doc.type} className="size-3" />}
-                  <span className="truncate">{name}</span>
-                  <span className="text-muted-foreground">
-                    p.{c.pagesLabel ?? c.page}
-                  </span>
-                </Badge>
-              )
-            })}
-          </div>
+          <Collapsible className="mt-3">
+            <CollapsibleTrigger className="group/src text-muted-foreground hover:text-foreground flex items-center gap-1 text-xs">
+              <ChevronRight className="size-3 transition-transform group-data-[state=open]/src:rotate-90" />
+              <FileSearch className="size-3" />
+              Sources
+              <span className="tabular-nums">({citations.length})</span>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="mt-2 flex flex-wrap items-center gap-1.5">
+              {citations.map((c) => {
+                const doc = docs.find((d) => d.id === c.docId)
+                const name = doc?.name ?? c.docName
+                if (!name) return null
+                return (
+                  <Badge
+                    key={c.n}
+                    variant="outline"
+                    className="hover:bg-muted max-w-64 cursor-pointer gap-1 font-normal"
+                    onClick={() => setOpenCitation(c)}
+                  >
+                    <span className="bg-primary/10 text-primary flex size-3.5 items-center justify-center rounded-full text-[9px] font-semibold">
+                      {c.n}
+                    </span>
+                    {doc && <DocIcon type={doc.type} className="size-3" />}
+                    <span className="truncate">{name}</span>
+                    <span className="text-muted-foreground">
+                      p.{c.pagesLabel ?? c.page}
+                    </span>
+                  </Badge>
+                )
+              })}
+            </CollapsibleContent>
+          </Collapsible>
         )}
 
         {/* Actions */}
@@ -380,6 +391,6 @@ export const Message = React.memo(MessageImpl, (prev, next) => {
     prev.session.activeBranchId === next.session.activeBranchId &&
     prev.session.branches === next.session.branches &&
     Object.keys(prev.session.messages).length ===
-      Object.keys(next.session.messages).length
+    Object.keys(next.session.messages).length
   )
 })

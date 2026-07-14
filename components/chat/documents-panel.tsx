@@ -40,6 +40,215 @@ import { useOrbit } from "@/lib/store"
 import { useSharePointSync } from "@/lib/use-sharepoint-sync"
 import type { ChatSession, Doc, DocFolder } from "@/lib/types"
 
+/** Every selectable doc inside a folder or any of its descendants. */
+function collectDescendantDocIds(
+  folderId: string,
+  folders: DocFolder[],
+  selectable: Doc[]
+): string[] {
+  const ids = selectable.filter((d) => d.folderId === folderId).map((d) => d.id)
+  for (const child of folders.filter((f) => f.parentId === folderId)) {
+    ids.push(...collectDescendantDocIds(child.id, folders, selectable))
+  }
+  return ids
+}
+
+/** A single document row in the tree. */
+function DocRow({
+  doc,
+  depth,
+  adopt = false,
+  selected,
+  onToggle,
+  onPreview,
+}: {
+  doc: Doc
+  depth: number
+  /** server-search hit: pull it into the store before scoping it */
+  adopt?: boolean
+  selected: Set<string>
+  onToggle: (doc: Doc, adopt: boolean) => void
+  onPreview: (doc: Doc) => void
+}) {
+  const ready = doc.status === "ready"
+  const toggle = () => onToggle(doc, adopt)
+  return (
+    <div
+      className="hover:bg-accent group flex items-center gap-1.5 rounded-md px-1.5 py-1.5"
+      style={{ paddingLeft: depth * 14 + 26 }}
+    >
+      <Checkbox
+        checked={selected.has(doc.id)}
+        disabled={!ready}
+        onCheckedChange={toggle}
+      />
+      <DocIcon type={doc.type} />
+      <button
+        className={cn(
+          "min-w-0 flex-1 cursor-pointer truncate text-left text-sm",
+          !ready && "text-muted-foreground"
+        )}
+        disabled={!ready}
+        title={doc.name}
+        onClick={toggle}
+      >
+        {doc.name}
+      </button>
+      {!ready ? (
+        <Badge variant="outline" className="h-4.5 gap-1 px-1 text-[9px] capitalize">
+          <Spinner className="size-2.5" /> {doc.status}
+        </Badge>
+      ) : (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label={`Preview ${doc.name}`}
+              className="size-6 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 max-md:opacity-100"
+              onClick={() => onPreview(doc)}
+            >
+              <Eye className="size-3.5" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="left">Preview</TooltipContent>
+        </Tooltip>
+      )}
+    </div>
+  )
+}
+
+/** A folder node in the tree with tri-state selection over its descendants. */
+function FolderNode({
+  folder,
+  depth,
+  folders,
+  docs,
+  selected,
+  matches,
+  descendantDocIds,
+  onSelectedChange,
+  onToggleDoc,
+  onPreview,
+  query,
+}: {
+  folder: DocFolder
+  depth: number
+  folders: DocFolder[]
+  docs: Doc[]
+  selected: Set<string>
+  matches: (doc: Doc) => boolean
+  descendantDocIds: (folderId: string) => string[]
+  onSelectedChange: (next: Set<string>) => void
+  onToggleDoc: (doc: Doc, adopt: boolean) => void
+  onPreview: (doc: Doc) => void
+  query: string
+}) {
+  const [open, setOpen] = React.useState(false)
+  const childFolders = folders.filter((f) => f.parentId === folder.id)
+  const contained = docs.filter((d) => d.folderId === folder.id && matches(d))
+  const deepIds = descendantDocIds(folder.id)
+  if (query && contained.length === 0 && deepIds.every((id) => !matches(docs.find((d) => d.id === id)!)))
+    return null
+
+  const selectedCount = deepIds.filter((id) => selected.has(id)).length
+  const state: boolean | "indeterminate" =
+    deepIds.length > 0 && selectedCount === deepIds.length
+      ? true
+      : selectedCount > 0
+        ? "indeterminate"
+        : false
+
+  const FolderIcon =
+    folder.source === "sharepoint"
+      ? Cloud
+      : folder.source === "generated"
+        ? Sparkles
+        : Folder
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <div
+        className="hover:bg-accent group flex items-center gap-1.5 rounded-md px-1.5 py-1.5"
+        style={{ paddingLeft: depth * 14 + 6 }}
+      >
+        <CollapsibleTrigger asChild>
+          <button
+            aria-label={open ? "Collapse folder" : "Expand folder"}
+            className="hover:bg-muted-foreground/20 rounded p-0.5"
+          >
+            <ChevronRight
+              className={cn(
+                "text-muted-foreground size-3.5 transition-transform",
+                open && "rotate-90"
+              )}
+            />
+          </button>
+        </CollapsibleTrigger>
+        <Checkbox
+          checked={state}
+          disabled={deepIds.length === 0}
+          onCheckedChange={(v) => {
+            const next = new Set(selected)
+            if (v === true) deepIds.forEach((id) => next.add(id))
+            else deepIds.forEach((id) => next.delete(id))
+            onSelectedChange(next)
+          }}
+        />
+        <FolderIcon
+          className={cn(
+            "size-4 shrink-0",
+            folder.source === "sharepoint"
+              ? "text-sky-600 dark:text-sky-400"
+              : folder.source === "generated"
+                ? "text-chart-1"
+                : "text-muted-foreground"
+          )}
+        />
+        <button
+          className="min-w-0 flex-1 cursor-pointer truncate text-left text-sm font-medium"
+          onClick={() => setOpen((v) => !v)}
+        >
+          {folder.name}
+        </button>
+        {deepIds.length > 0 && (
+          <span className="text-muted-foreground text-[10px] tabular-nums">
+            {selectedCount}/{deepIds.length}
+          </span>
+        )}
+      </div>
+      <CollapsibleContent>
+        {contained.map((doc) => (
+          <DocRow
+            key={doc.id}
+            doc={doc}
+            depth={depth + 1}
+            selected={selected}
+            onToggle={onToggleDoc}
+            onPreview={onPreview}
+          />
+        ))}
+        {childFolders.map((child) => (
+          <FolderNode
+            key={child.id}
+            folder={child}
+            depth={depth + 1}
+            folders={folders}
+            docs={docs}
+            selected={selected}
+            matches={matches}
+            descendantDocIds={descendantDocIds}
+            onSelectedChange={onSelectedChange}
+            onToggleDoc={onToggleDoc}
+            onPreview={onPreview}
+            query={query}
+          />
+        ))}
+      </CollapsibleContent>
+    </Collapsible>
+  )
+}
+
 /**
  * Right-side documents panel for the chat workspace: tree navigation with
  * tri-state selection (the session's grounding scope), inline preview,
@@ -70,16 +279,9 @@ export function DocumentsPanel({
     setSessionScope(session.id, Array.from(next))
 
   /** every selectable doc inside a folder or any of its descendants */
-  const descendantDocIds = React.useCallback(
-    (folderId: string): string[] => {
-      const ids: string[] = selectable
-        .filter((d) => d.folderId === folderId)
-        .map((d) => d.id)
-      for (const child of folders.filter((f) => f.parentId === folderId)) {
-        ids.push(...descendantDocIds(child.id))
-      }
-      return ids
-    },
+  const descendantDocIds = React.useMemo(
+    () => (folderId: string): string[] =>
+      collectDescendantDocIds(folderId, folders, selectable),
     [folders, selectable]
   )
 
@@ -92,155 +294,16 @@ export function DocumentsPanel({
   // only the newest page of ~19k docs.
   const { results: serverHits, searching } = useLiveDocSearch(query)
 
-  const FolderNode = ({ folder, depth }: { folder: DocFolder; depth: number }) => {
-    const [open, setOpen] = React.useState(true)
-    const childFolders = folders.filter((f) => f.parentId === folder.id)
-    const contained = docs.filter((d) => d.folderId === folder.id && matches(d))
-    const deepIds = descendantDocIds(folder.id)
-    if (query && contained.length === 0 && deepIds.every((id) => !matches(docs.find((d) => d.id === id)!)))
-      return null
-
-    const selectedCount = deepIds.filter((id) => selected.has(id)).length
-    const state: boolean | "indeterminate" =
-      deepIds.length > 0 && selectedCount === deepIds.length
-        ? true
-        : selectedCount > 0
-          ? "indeterminate"
-          : false
-
-    const FolderIcon =
-      folder.source === "sharepoint"
-        ? Cloud
-        : folder.source === "generated"
-          ? Sparkles
-          : Folder
-
-    return (
-      <Collapsible open={open} onOpenChange={setOpen}>
-        <div
-          className="hover:bg-accent group flex items-center gap-1.5 rounded-md px-1.5 py-1.5"
-          style={{ paddingLeft: depth * 14 + 6 }}
-        >
-          <CollapsibleTrigger asChild>
-            <button
-              aria-label={open ? "Collapse folder" : "Expand folder"}
-              className="hover:bg-muted-foreground/20 rounded p-0.5"
-            >
-              <ChevronRight
-                className={cn(
-                  "text-muted-foreground size-3.5 transition-transform",
-                  open && "rotate-90"
-                )}
-              />
-            </button>
-          </CollapsibleTrigger>
-          <Checkbox
-            checked={state}
-            disabled={deepIds.length === 0}
-            onCheckedChange={(v) => {
-              const next = new Set(selected)
-              if (v === true) deepIds.forEach((id) => next.add(id))
-              else deepIds.forEach((id) => next.delete(id))
-              setSelected(next)
-            }}
-          />
-          <FolderIcon
-            className={cn(
-              "size-4 shrink-0",
-              folder.source === "sharepoint"
-                ? "text-sky-600 dark:text-sky-400"
-                : folder.source === "generated"
-                  ? "text-chart-1"
-                  : "text-muted-foreground"
-            )}
-          />
-          <button
-            className="min-w-0 flex-1 cursor-pointer truncate text-left text-sm font-medium"
-            onClick={() => setOpen((v) => !v)}
-          >
-            {folder.name}
-          </button>
-          {deepIds.length > 0 && (
-            <span className="text-muted-foreground text-[10px] tabular-nums">
-              {selectedCount}/{deepIds.length}
-            </span>
-          )}
-        </div>
-        <CollapsibleContent>
-          {contained.map((doc) => (
-            <DocRow key={doc.id} doc={doc} depth={depth + 1} />
-          ))}
-          {childFolders.map((child) => (
-            <FolderNode key={child.id} folder={child} depth={depth + 1} />
-          ))}
-        </CollapsibleContent>
-      </Collapsible>
-    )
-  }
-
-  const DocRow = ({
-    doc,
-    depth,
-    adopt = false,
-  }: {
-    doc: Doc
-    depth: number
-    /** server-search hit: pull it into the store before scoping it */
-    adopt?: boolean
-  }) => {
-    const ready = doc.status === "ready"
-    const toggle = () => {
+  const toggleDoc = React.useCallback(
+    (doc: Doc, adopt: boolean) => {
       if (adopt) adoptSearchResult(doc)
-      const next = new Set(selected)
+      const next = new Set(session.scopeDocIds)
       if (next.has(doc.id)) next.delete(doc.id)
       else next.add(doc.id)
-      setSelected(next)
-    }
-    return (
-      <div
-        className="hover:bg-accent group flex items-center gap-1.5 rounded-md px-1.5 py-1.5"
-        style={{ paddingLeft: depth * 14 + 26 }}
-      >
-        <Checkbox
-          checked={selected.has(doc.id)}
-          disabled={!ready}
-          onCheckedChange={toggle}
-        />
-        <DocIcon type={doc.type} />
-        <button
-          className={cn(
-            "min-w-0 flex-1 cursor-pointer truncate text-left text-sm",
-            !ready && "text-muted-foreground"
-          )}
-          disabled={!ready}
-          title={doc.name}
-          onClick={toggle}
-        >
-          {doc.name}
-        </button>
-        {!ready ? (
-          <Badge variant="outline" className="h-4.5 gap-1 px-1 text-[9px] capitalize">
-            <Spinner className="size-2.5" /> {doc.status}
-          </Badge>
-        ) : (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={`Preview ${doc.name}`}
-                className="size-6 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 max-md:opacity-100"
-                onClick={() => setPreviewDoc(doc)}
-              >
-                <Eye className="size-3.5" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="left">Preview</TooltipContent>
-          </Tooltip>
-        )}
-      </div>
-    )
-  }
+      setSessionScope(session.id, Array.from(next))
+    },
+    [session.scopeDocIds, session.id, setSessionScope]
+  )
 
   const libraryRoots = folders.filter(
     (f) => f.parentId === null && f.source !== "sharepoint"
@@ -316,7 +379,20 @@ export function DocumentsPanel({
           {tab === "library" ? (
             <>
               {libraryRoots.map((folder) => (
-                <FolderNode key={folder.id} folder={folder} depth={0} />
+                <FolderNode
+                  key={folder.id}
+                  folder={folder}
+                  depth={0}
+                  folders={folders}
+                  docs={docs}
+                  selected={selected}
+                  matches={matches}
+                  descendantDocIds={descendantDocIds}
+                  onSelectedChange={setSelected}
+                  onToggleDoc={toggleDoc}
+                  onPreview={setPreviewDoc}
+                  query={query}
+                />
               ))}
               {/* uploads that aren't filed in any folder */}
               {docs
@@ -327,7 +403,14 @@ export function DocumentsPanel({
                     matches(d)
                 )
                 .map((doc) => (
-                  <DocRow key={doc.id} doc={doc} depth={0} />
+                  <DocRow
+                    key={doc.id}
+                    doc={doc}
+                    depth={0}
+                    selected={selected}
+                    onToggle={toggleDoc}
+                    onPreview={setPreviewDoc}
+                  />
                 ))}
               {/* corpus-wide matches from Foundry beyond the loaded page */}
               {searching && (
@@ -341,7 +424,15 @@ export function DocumentsPanel({
                     From your full library
                   </p>
                   {serverHits.map((doc) => (
-                    <DocRow key={doc.id} doc={doc} depth={0} adopt />
+                    <DocRow
+                      key={doc.id}
+                      doc={doc}
+                      depth={0}
+                      adopt
+                      selected={selected}
+                      onToggle={toggleDoc}
+                      onPreview={setPreviewDoc}
+                    />
                   ))}
                 </>
               )}
@@ -396,7 +487,21 @@ export function DocumentsPanel({
                         <TooltipContent side="left">Sync now</TooltipContent>
                       </Tooltip>
                     </div>
-                    {folder && <FolderNode folder={folder} depth={0} />}
+                    {folder && (
+                      <FolderNode
+                        folder={folder}
+                        depth={0}
+                        folders={folders}
+                        docs={docs}
+                        selected={selected}
+                        matches={matches}
+                        descendantDocIds={descendantDocIds}
+                        onSelectedChange={setSelected}
+                        onToggleDoc={toggleDoc}
+                        onPreview={setPreviewDoc}
+                        query={query}
+                      />
+                    )}
                   </div>
                 )
               })}

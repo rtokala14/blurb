@@ -44,16 +44,14 @@ in simulated mode so the flow still completes end to end.
 
 ### App shell
 - Collapsible sidebar (workspace nav + pinned/recent sessions), light & dark themes
-- Global command palette (`⌘K`): jump anywhere, search documents, run actions
-- Keyboard-first: `?` opens the shortcuts dialog — `⌘1–5` navigation, `⌘⇧O`
-  new session, `⌘⇧U` upload, `⌘.` documents panel, `⌘⇧E` export, `Esc` stop
-  generating, `⌥↑/↓` jump turns, and typing anywhere focuses the composer
+- Global command palette (`Ctrl+K`): jump anywhere, search documents, run actions
+- Keyboard-first: `?` opens the shortcuts dialog — `Ctrl+1–4` navigation, `Ctrl+Shift+O`
+  new session, `Ctrl+Shift+U` upload, `Ctrl+.` documents panel, `Ctrl+Shift+E` export, `Esc` stop
+  generating, `Alt+↑/↓` jump turns, and typing anywhere focuses the composer
 - Responsive: panels become off-canvas sheets on small screens, tables shed
   columns, and hover actions stay visible on touch
 
-### Dashboard `/`
-- Library index coverage, ingestion pipeline with live upload/OCR/indexing states
-- Workspace activity feed, recent documents & sessions
+> The workspace lands on **Chat** by default; `/` redirects to `/chat`.
 
 ### Documents `/documents`
 - Folder tree (uploads, SharePoint-synced, AI workspace), breadcrumbs, list/grid views

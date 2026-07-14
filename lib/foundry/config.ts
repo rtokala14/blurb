@@ -29,6 +29,20 @@ export interface FoundryConfig {
     metadataVersion?: string
   }
   refineQueryApiName: string
+  /**
+   * Foundry's vendor-native LLM proxy. Exposes OpenAI- and Anthropic-compatible
+   * endpoints under {host}/api/v2/llm/proxy/{provider}/v1, authenticated with
+   * the same Foundry bearer token. Used for lightweight text tasks (e.g. email
+   * refining) where the full AIP-agent grounding pipeline is unnecessary.
+   */
+  llmProxy: {
+    /** default provider for refine-style tasks */
+    provider: "openai" | "anthropic"
+    /** model id for the default provider (e.g. "gpt-4o", "claude-sonnet-4") */
+    model: string
+    /** max tokens for a single completion */
+    maxTokens: number
+  }
 }
 
 const DEFAULT_HOSTNAME = "https://jacobs.palantirfoundry.com"
@@ -63,6 +77,16 @@ export function getFoundryConfig(): FoundryConfig {
     },
     refineQueryApiName:
       process.env.REFINE_QUERY_API_NAME || "dgiiDocAiRefiningAgent",
+    llmProxy: {
+      provider:
+        process.env.LLM_PROXY_PROVIDER === "anthropic" ? "anthropic" : "openai",
+      model:
+        process.env.LLM_PROXY_MODEL ||
+        (process.env.LLM_PROXY_PROVIDER === "anthropic"
+          ? "claude-sonnet-4"
+          : "gpt-4o"),
+      maxTokens: Number(process.env.LLM_PROXY_MAX_TOKENS) || 2048,
+    },
   }
 }
 
