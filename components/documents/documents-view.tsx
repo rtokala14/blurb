@@ -177,9 +177,17 @@ export function DocumentsView() {
   }
 
   const loadMore = async () => {
+    const next = docWindow + 300
+    // If the store already holds more rows than we're showing, just grow the
+    // render window (no fetch). Only hit the server for additional live pages
+    // when we've exhausted what's loaded.
+    const needsFetch = live && !query && !currentFolderId && docs.length <= docWindow
+    if (!needsFetch) {
+      setDocWindow(next)
+      return
+    }
     setLoadingMore(true)
     try {
-      const next = docWindow + 300
       await loadMoreLiveDocs(next)
       setDocWindow(next)
     } catch (error) {
@@ -318,20 +326,35 @@ export function DocumentsView() {
     currentFolderId ? "" : query
   )
 
-  const visible = docs
-    .filter((d) => !descendantIds || (d.folderId && descendantIds.has(d.folderId)))
-    .filter(
-      (d) =>
-        !query ||
-        d.name.toLowerCase().includes(query.toLowerCase()) ||
-        d.tags.some((t) => t.includes(query.toLowerCase()))
-    )
-    .concat(query && !currentFolderId ? serverHits : [])
-    .sort((a, b) => {
-      if (sort === "name") return a.name.localeCompare(b.name)
-      if (sort === "size") return b.sizeKB - a.sizeKB
-      return b.updatedAt.localeCompare(a.updatedAt)
-    })
+  // Memoized filter+sort chain — otherwise it re-runs (and re-sorts the whole
+  // list) on every render, including selection toggles, hover, and dialog open.
+  const visible = React.useMemo(() => {
+    const q = query.toLowerCase()
+    return docs
+      .filter(
+        (d) => !descendantIds || (d.folderId && descendantIds.has(d.folderId))
+      )
+      .filter(
+        (d) =>
+          !query ||
+          d.name.toLowerCase().includes(q) ||
+          d.tags.some((t) => t.includes(q))
+      )
+      .concat(query && !currentFolderId ? serverHits : [])
+      .sort((a, b) => {
+        if (sort === "name") return a.name.localeCompare(b.name)
+        if (sort === "size") return b.sizeKB - a.sizeKB
+        return b.updatedAt.localeCompare(a.updatedAt)
+      })
+  }, [docs, descendantIds, query, serverHits, currentFolderId, sort])
+
+  // Cap mounted rows to the current window. Each row wraps a Radix ContextMenu,
+  // so rendering the full corpus at once is the heaviest cost on this route;
+  // "Load more" grows the window on demand.
+  const rendered = React.useMemo(
+    () => visible.slice(0, docWindow),
+    [visible, docWindow]
+  )
 
   const previewDoc =
     docs.find((d) => d.id === previewDocId) ??
@@ -655,7 +678,7 @@ export function DocumentsView() {
                         aria-label="Select all visible"
                         checked={
                           visible.length > 0 &&
-                          visible.every((d) => selectedIds.has(d.id))
+                            visible.every((d) => selectedIds.has(d.id))
                             ? true
                             : selectedIds.size > 0
                               ? "indeterminate"
@@ -677,7 +700,7 @@ export function DocumentsView() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {visible.map((doc) => (
+                {rendered.map((doc) => (
                   <ContextMenu key={doc.id}>
                     <ContextMenuTrigger asChild>
                       <TableRow
@@ -725,7 +748,7 @@ export function DocumentsView() {
             </Table>
           ) : (
             <div className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {visible.map((doc) => (
+              {rendered.map((doc) => (
                 <ContextMenu key={doc.id}>
                   <ContextMenuTrigger asChild>
                     <Card
@@ -757,17 +780,22 @@ export function DocumentsView() {
               ))}
             </div>
           )}
-          {live && !query && !currentFolderId && visible.length >= docWindow && (
-            <div className="flex justify-center p-4">
-              <Button variant="outline" size="sm" disabled={loadingMore} onClick={loadMore}>
-                {loadingMore ? "Loading…" : "Load more documents"}
-              </Button>
-            </div>
-          )}
+          {/* Show when more rows can be revealed locally, or (live root view)
+              when the server may hold further pages. */}
+          {(rendered.length < visible.length ||
+            (live && !query && !currentFolderId && docs.length <= docWindow)) && (
+              <div className="flex justify-center p-4">
+                <Button variant="outline" size="sm" disabled={loadingMore} onClick={loadMore}>
+                  {loadingMore ? "Loading…" : "Load more documents"}
+                </Button>
+              </div>
+            )}
         </div>
 
         <div className="text-muted-foreground border-t px-4 py-1.5 text-xs">
-          {visible.length} {visible.length === 1 ? "document" : "documents"}
+          {rendered.length < visible.length
+            ? `Showing ${rendered.length} of ${visible.length} documents`
+            : `${visible.length} ${visible.length === 1 ? "document" : "documents"}`}
           {currentFolder ? ` in ${currentFolder.name}` : " in library"} · right-click
           a row for quick actions
         </div>

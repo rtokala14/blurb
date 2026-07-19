@@ -17,6 +17,10 @@ import type { Citation } from "@/lib/types"
 
 const CITE_HREF = "#cite-"
 
+// Hoisted so react-markdown sees a stable plugins array reference across
+// renders (a new `[remarkGfm]` literal per render defeats its processor cache).
+const REMARK_PLUGINS = [remarkGfm]
+
 /** ⟦n⟧ → [⟦n⟧](#cite-n) so the marker survives markdown parsing intact. */
 function markCitations(content: string): string {
   return content.replace(/⟦(\d+)⟧/g, "[⟦$1⟧](#cite-$1)")
@@ -62,6 +66,10 @@ export function MessageContent({
     [citations, renderCitation]
   )
 
+  // Memoize the citation-marker rewrite so the O(content) regex only runs when
+  // the content string actually changes, not on unrelated re-renders.
+  const marked = React.useMemo(() => markCitations(content), [content])
+
   return (
     <div
       className={cn(
@@ -70,8 +78,8 @@ export function MessageContent({
         className
       )}
     >
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
-        {markCitations(content)}
+      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={components}>
+        {marked}
       </ReactMarkdown>
     </div>
   )

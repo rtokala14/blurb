@@ -20,21 +20,31 @@ import { cn } from "@/lib/utils"
 import { useOrbit } from "@/lib/store"
 import type { DocFolder } from "@/lib/types"
 
-function FolderNode({
+/** Precomputed tree shape so nodes don't each scan the full folder/doc arrays. */
+type FolderIndex = {
+  /** parentId (or "\0" for roots) -> child folders */
+  childrenByParent: Map<string, DocFolder[]>
+  /** folderId -> direct document count */
+  docCountByFolder: Map<string, number>
+}
+
+const ROOT_KEY = "\0"
+
+const FolderNode = React.memo(function FolderNode({
   folder,
   depth,
   currentFolderId,
   onSelect,
+  index,
 }: {
   folder: DocFolder
   depth: number
   currentFolderId: string | null
   onSelect: (id: string | null) => void
+  index: FolderIndex
 }) {
-  const folders = useOrbit((s) => s.folders)
-  const docs = useOrbit((s) => s.docs)
-  const children = folders.filter((f) => f.parentId === folder.id)
-  const count = docs.filter((d) => d.folderId === folder.id).length
+  const children = index.childrenByParent.get(folder.id) ?? EMPTY_FOLDERS
+  const count = index.docCountByFolder.get(folder.id) ?? 0
   const active = currentFolderId === folder.id
   const [open, setOpen] = React.useState(false)
 
@@ -94,13 +104,16 @@ function FolderNode({
               depth={depth + 1}
               currentFolderId={currentFolderId}
               onSelect={onSelect}
+              index={index}
             />
           ))}
         </CollapsibleContent>
       )}
     </Collapsible>
   )
-}
+})
+
+const EMPTY_FOLDERS: DocFolder[] = []
 
 export function FolderTree({
   currentFolderId,
@@ -111,8 +124,31 @@ export function FolderTree({
 }) {
   const folders = useOrbit((s) => s.folders)
   const docs = useOrbit((s) => s.docs)
-  const roots = folders.filter((f) => f.parentId === null)
-  const spCount = docs.filter((d) => d.source === "sharepoint").length
+
+  // Build the tree shape once per folders/docs change instead of having every
+  // node subscribe to (and re-filter) the full arrays. This turns an
+  // O(nodes × docs) re-render on any doc change into O(nodes + docs).
+  const index = React.useMemo<FolderIndex>(() => {
+    const childrenByParent = new Map<string, DocFolder[]>()
+    for (const f of folders) {
+      const key = f.parentId ?? ROOT_KEY
+      const list = childrenByParent.get(key)
+      if (list) list.push(f)
+      else childrenByParent.set(key, [f])
+    }
+    const docCountByFolder = new Map<string, number>()
+    for (const d of docs) {
+      if (!d.folderId) continue
+      docCountByFolder.set(d.folderId, (docCountByFolder.get(d.folderId) ?? 0) + 1)
+    }
+    return { childrenByParent, docCountByFolder }
+  }, [folders, docs])
+
+  const roots = index.childrenByParent.get(ROOT_KEY) ?? EMPTY_FOLDERS
+  const spCount = React.useMemo(
+    () => docs.filter((d) => d.source === "sharepoint").length,
+    [docs]
+  )
 
   return (
     <div className="space-y-4">
@@ -144,6 +180,7 @@ export function FolderTree({
               depth={0}
               currentFolderId={currentFolderId}
               onSelect={onSelect}
+              index={index}
             />
           ))}
       </div>
@@ -163,6 +200,7 @@ export function FolderTree({
               depth={0}
               currentFolderId={currentFolderId}
               onSelect={onSelect}
+              index={index}
             />
           ))}
       </div>

@@ -1,15 +1,12 @@
 "use client"
 
 import * as React from "react"
+import dynamic from "next/dynamic"
 import { ArrowUp, FileDown, History, UploadCloud, X } from "lucide-react"
 import { toast } from "sonner"
 
 import { artifactMeta } from "@/components/chat/artifact-card"
 import { DocIcon } from "@/components/doc-icon"
-import { DeckEditor } from "@/components/studio/deck-editor"
-import { DocEditor } from "@/components/studio/doc-editor"
-import { LiveDocEditor } from "@/components/studio/live-doc-editor"
-import { SheetEditor } from "@/components/studio/sheet-editor"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -29,14 +26,37 @@ import {
 } from "@/components/ui/tooltip"
 import { docFileName, persistDocDraft } from "@/lib/docgen/artifacts"
 import { parseDocEnvelope, serializeDocModel } from "@/lib/docgen/parse"
-import { renderDocx } from "@/lib/docgen/render-docx"
-import { renderPdf } from "@/lib/docgen/render-pdf"
 import { downloadBlob } from "@/lib/export-session"
 import { liveApi } from "@/lib/live-api"
 import { mapLiveDoc } from "@/lib/live-map"
 import { cn } from "@/lib/utils"
 import { useOrbit } from "@/lib/store"
 import type { Artifact } from "@/lib/types"
+
+// The four editors are heavy and mutually exclusive (only one renders per
+// artifact), so code-split them: the chat/studio route no longer bundles all
+// four up front. Client-only (they animate with timers), with a light fallback.
+const EDITOR_LOADING = (
+  <div className="flex h-full items-center justify-center">
+    <Spinner className="size-4" />
+  </div>
+)
+const DeckEditor = dynamic(
+  () => import("@/components/studio/deck-editor").then((m) => m.DeckEditor),
+  { ssr: false, loading: () => EDITOR_LOADING }
+)
+const DocEditor = dynamic(
+  () => import("@/components/studio/doc-editor").then((m) => m.DocEditor),
+  { ssr: false, loading: () => EDITOR_LOADING }
+)
+const LiveDocEditor = dynamic(
+  () => import("@/components/studio/live-doc-editor").then((m) => m.LiveDocEditor),
+  { ssr: false, loading: () => EDITOR_LOADING }
+)
+const SheetEditor = dynamic(
+  () => import("@/components/studio/sheet-editor").then((m) => m.SheetEditor),
+  { ssr: false, loading: () => EDITOR_LOADING }
+)
 
 /**
  * The Studio: where AI-created documents, spreadsheets, and decks are
@@ -110,8 +130,10 @@ export function StudioPanel({
     if (!model) return
     try {
       if (format === "docx") {
+        const { renderDocx } = await import("@/lib/docgen/render-docx")
         downloadBlob(await renderDocx(model), docFileName(model, "docx"))
       } else if (format === "pdf") {
+        const { renderPdf } = await import("@/lib/docgen/render-pdf")
         downloadBlob(renderPdf(model), docFileName(model, "pdf"))
       } else {
         downloadBlob(
@@ -130,6 +152,7 @@ export function StudioPanel({
     if (!model || saving) return
     setSaving(true)
     try {
+      const { renderDocx } = await import("@/lib/docgen/render-docx")
       const blob = await renderDocx(model)
       const name = docFileName(model, "docx")
       const file = new File([blob], name, {
@@ -289,23 +312,23 @@ export function StudioPanel({
             {isLive
               ? citedNames.length > 0
                 ? citedNames.slice(0, 8).map((name) => (
-                    <DropdownMenuItem key={name}>
-                      <DocIcon type="pdf" />
-                      <span className="truncate">{name}</span>
-                    </DropdownMenuItem>
-                  ))
+                  <DropdownMenuItem key={name}>
+                    <DocIcon type="pdf" />
+                    <span className="truncate">{name}</span>
+                  </DropdownMenuItem>
+                ))
                 : sources.map((doc) => (
-                    <DropdownMenuItem key={doc.id}>
-                      <DocIcon type={doc.type} />
-                      <span className="truncate">{doc.name}</span>
-                    </DropdownMenuItem>
-                  ))
-              : sources.map((doc) => (
                   <DropdownMenuItem key={doc.id}>
                     <DocIcon type={doc.type} />
                     <span className="truncate">{doc.name}</span>
                   </DropdownMenuItem>
-                ))}
+                ))
+              : sources.map((doc) => (
+                <DropdownMenuItem key={doc.id}>
+                  <DocIcon type={doc.type} />
+                  <span className="truncate">{doc.name}</span>
+                </DropdownMenuItem>
+              ))}
             <DropdownMenuSeparator />
             <DropdownMenuLabel>Versions</DropdownMenuLabel>
             {isLive ? (

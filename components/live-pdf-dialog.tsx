@@ -20,7 +20,33 @@ import type { Citation } from "@/lib/types"
  * from /api/orbit/media/{rid}/content, blob-caches it, and points the native
  * PDF viewer at the cited page (+ text search when a quote exists).
  */
+
+// Bounded LRU of object URLs. Reopening a recently-viewed PDF is instant, but
+// we cap the cache and `revokeObjectURL` on eviction so blobs don't leak for
+// the whole session (each cached PDF holds its bytes in memory otherwise).
+const BLOB_CACHE_LIMIT = 6
 const blobCache = new Map<string, string>()
+
+function getCachedBlobUrl(key: string): string | undefined {
+  const url = blobCache.get(key)
+  if (url) {
+    // refresh recency
+    blobCache.delete(key)
+    blobCache.set(key, url)
+  }
+  return url
+}
+
+function setCachedBlobUrl(key: string, url: string) {
+  blobCache.set(key, url)
+  while (blobCache.size > BLOB_CACHE_LIMIT) {
+    const oldest = blobCache.keys().next().value
+    if (oldest === undefined) break
+    const evicted = blobCache.get(oldest)
+    blobCache.delete(oldest)
+    if (evicted) URL.revokeObjectURL(evicted)
+  }
+}
 
 export function LivePdfDialog({
   citation,
@@ -38,7 +64,7 @@ export function LivePdfDialog({
   const mediaRid = citation?.mediaRid
   React.useEffect(() => {
     if (!open || !mediaRid) return
-    const cached = blobCache.get(mediaRid)
+    const cached = getCachedBlobUrl(mediaRid)
     if (cached) {
       setUrl(cached)
       return
@@ -51,7 +77,7 @@ export function LivePdfDialog({
         if (!res.ok) throw new Error(`Failed to load PDF (${res.status})`)
         const blob = await res.blob()
         const objectUrl = URL.createObjectURL(blob)
-        blobCache.set(mediaRid, objectUrl)
+        setCachedBlobUrl(mediaRid, objectUrl)
         if (!cancelled) setUrl(objectUrl)
       })
       .catch((e) => {

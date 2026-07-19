@@ -99,18 +99,30 @@ export function AppSidebar() {
     folder: ChatFolder | null
   }>({ open: false, folder: null })
 
-  const unfiled = sessions
-    .filter((s) => !s.chatFolderId || !chatFolders.some((f) => f.id === s.chatFolderId))
-    .sort(byRecency)
-    .slice(0, 6)
+  // Recompute the recency-sorted lists only when sessions/folders change, not
+  // on the sidebar's own local state (dialogs, hover) — and not repeatedly for
+  // the same store update.
+  const unfiled = React.useMemo(
+    () =>
+      sessions
+        .filter(
+          (s) => !s.chatFolderId || !chatFolders.some((f) => f.id === s.chatFolderId)
+        )
+        .sort(byRecency)
+        .slice(0, 6),
+    [sessions, chatFolders]
+  )
 
-  const sessionsByFolder = new Map<string, ChatSession[]>()
-  for (const folder of chatFolders) {
-    sessionsByFolder.set(
-      folder.id,
-      sessions.filter((s) => s.chatFolderId === folder.id).sort(byRecency)
-    )
-  }
+  const sessionsByFolder = React.useMemo(() => {
+    const map = new Map<string, ChatSession[]>()
+    for (const folder of chatFolders) {
+      map.set(
+        folder.id,
+        sessions.filter((s) => s.chatFolderId === folder.id).sort(byRecency)
+      )
+    }
+    return map
+  }, [sessions, chatFolders])
 
   const isActive = (session: ChatSession) =>
     pathname.startsWith("/chat") && session.id === activeSessionId

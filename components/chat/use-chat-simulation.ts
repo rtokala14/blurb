@@ -151,9 +151,8 @@ export function useChatSimulation(sessionId: string) {
         content: text,
         createdAt: new Date().toISOString(),
         phase: "done",
-        scopeLabel: `${session.scopeDocIds.length} ${
-          session.scopeDocIds.length === 1 ? "document" : "documents"
-        } in scope`,
+        scopeLabel: `${session.scopeDocIds.length} ${session.scopeDocIds.length === 1 ? "document" : "documents"
+          } in scope`,
       })
       if (session.title === "New session") {
         renameSession(
@@ -225,5 +224,8 @@ export function useChatSimulation(sessionId: string) {
     setBusyId(null)
   }, [busyId, clearAll, sessionId])
 
-  return { send, regenerate, editAndBranch, stop, busyId, isBusy: busyId !== null }
+  return React.useMemo(
+    () => ({ send, regenerate, editAndBranch, stop, busyId, isBusy: busyId !== null }),
+    [send, regenerate, editAndBranch, stop, busyId]
+  )
 }

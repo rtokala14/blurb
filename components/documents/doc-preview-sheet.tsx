@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import dynamic from "next/dynamic"
 import { useRouter } from "next/navigation"
 import {
   Clock,
@@ -13,8 +14,6 @@ import {
 import { toast } from "sonner"
 
 import { DocIcon, docTypeLabel } from "@/components/doc-icon"
-import { LivePdfDialog } from "@/components/live-pdf-dialog"
-import { PdfViewerDialog } from "@/components/pdf-viewer-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
@@ -33,6 +32,17 @@ import { TimeAgo } from "@/components/time-ago"
 import { versionsFor } from "@/lib/data"
 import { useOrbit } from "@/lib/store"
 import type { Doc, DocStatus } from "@/lib/types"
+
+// PDF viewers are only needed once a user actually opens a preview — keep them
+// out of the documents route's initial bundle.
+const LivePdfDialog = dynamic(
+  () => import("@/components/live-pdf-dialog").then((m) => m.LivePdfDialog),
+  { ssr: false }
+)
+const PdfViewerDialog = dynamic(
+  () => import("@/components/pdf-viewer-dialog").then((m) => m.PdfViewerDialog),
+  { ssr: false }
+)
 
 const statusVariant: Record<
   DocStatus,

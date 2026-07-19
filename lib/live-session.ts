@@ -21,10 +21,12 @@ export function loadSessionContent(rid: string): Promise<void> {
     // Envelope-bearing assistant messages become Studio artifacts; their
     // chat content collapses to a one-line summary + card.
     const derived = deriveDocArtifacts(rid, tree.messages)
-    const store = useOrbit.getState()
-    store.setSessionTranscript(rid, derived.messages, tree.leafId)
-    store.setSessionArtifacts(rid, derived.artifacts)
-    store.patchSession(rid, {
+    // Single store write → one render pass instead of three.
+    useOrbit.getState().hydrateSessionContent({
+      sessionId: rid,
+      messages: derived.messages,
+      leafId: tree.leafId,
+      artifacts: derived.artifacts,
       branches: (content.branches ?? []).map(mapLiveBranch),
       activeBranchId: content.activeBranchId ?? null,
     })

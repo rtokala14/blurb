@@ -123,9 +123,26 @@ export function ChatWorkspace() {
     }
   }, [session?.id, session?.live, session?.contentLoaded, sim.isBusy, loadContent])
 
-  const path = session ? activePath(session) : []
-  const branches = session ? countBranches(session) : 1
+  // Derivations walk the whole message tree; memoize on `session` identity so
+  // they only recompute when the store actually replaces the session object
+  // (once per throttled stream flush) rather than on every local-state render.
+  const path = React.useMemo(() => (session ? activePath(session) : []), [session])
+  const branches = React.useMemo(
+    () => (session ? countBranches(session) : 1),
+    [session]
+  )
   const streamingContent = path.find((m) => m.phase !== "done")
+
+  /* A signature of the turns in view: their ids plus whether any turn is still
+     streaming. The scroll-spy observer re-attaches whenever this changes so it
+     picks up (a) newly added turns, (b) optimistic ids reconciled to persisted
+     ones after a turn completes, and (c) the streaming→done transition — none
+     of which are captured by `path.length` alone (a completed live turn keeps
+     the same message count). */
+  const turnSignature = React.useMemo(
+    () => `${path.map((m) => m.id).join(",")}|${streamingContent ? "s" : "d"}`,
+    [path, streamingContent]
+  )
 
   /* A live session opened from the sidebar fetches its transcript lazily.
      Until it lands, show a loading skeleton instead of the welcome state so
@@ -174,7 +191,26 @@ export function ChatWorkspace() {
     )
     el.querySelectorAll("[id^='msg-']").forEach((node) => observer.observe(node))
     return () => observer.disconnect()
-  }, [path.length, session?.id])
+    // `turnSignature` re-attaches the observer when turns are added, when a
+    // live turn finishes (streaming→done), and when optimistic ids reconcile
+    // to persisted ones — cases `path.length` alone would miss.
+  }, [turnSignature, session?.id])
+
+  /* Keep the active turn valid across id churn. After a live turn completes,
+     `loadContent` swaps optimistic ids for persisted ones, so a previously
+     tracked `activeMessageId` can point at a message that no longer exists —
+     leaving the navigator with nothing highlighted. When that happens (or on
+     first load), fall back to the latest turn so the newest reply is marked
+     active without needing to leave and re-open the session. */
+  React.useEffect(() => {
+    if (path.length === 0) return
+    const stillPresent =
+      activeMessageId !== null && path.some((m) => m.id === activeMessageId)
+    if (!stillPresent) {
+      setActiveMessageId(path[path.length - 1].id)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [turnSignature])
 
   /* chat hotkeys: Esc stop · Ctrl+Shift+E export · Ctrl+. docs panel ·
      Alt+↑/↓ turns · type anywhere to focus the composer */
@@ -253,11 +289,11 @@ export function ChatWorkspace() {
     )
   }
 
-  const jumpTo = (messageId: string) => {
+  const jumpTo = React.useCallback((messageId: string) => {
     document
       .getElementById(`msg-${messageId}`)
       ?.scrollIntoView({ behavior: "smooth", block: "start" })
-  }
+  }, [])
 
   return (
     <div className="flex min-h-0 flex-1">
@@ -382,7 +418,7 @@ export function ChatWorkspace() {
             <div className="relative flex min-h-0 flex-1">
               <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
                 {loadingContent ? (
-                  <div className="mx-auto max-w-3xl space-y-8 px-4 py-6">
+                  <div className="mx-auto max-w-4xl space-y-8 px-4 py-6">
                     {[0, 1, 2].map((i) => (
                       <div key={i} className="space-y-4">
                         {/* user bubble placeholder (right-aligned) */}
@@ -447,7 +483,7 @@ export function ChatWorkspace() {
                     </div>
                   </div>
                 ) : (
-                  <div className="mx-auto max-w-3xl space-y-6 px-4 py-6">
+                  <div className="mx-auto max-w-4xl space-y-6 px-4 py-6">
                     {path.map((message) => (
                       <Message
                         key={message.id}

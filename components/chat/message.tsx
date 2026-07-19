@@ -101,6 +101,15 @@ function MessageImpl({
   const [vote, setVote] = React.useState<"up" | "down" | null>(null)
   const [includeRefs, setIncludeRefs] = React.useState(true)
 
+  // Stable so MessageContent's memoized `components` map can actually cache
+  // across streamed frames instead of rebuilding every render.
+  const renderCitation = React.useCallback(
+    (citation: Citation) => (
+      <CitationChip citation={citation} onOpen={setOpenCitation} />
+    ),
+    []
+  )
+
   const download = async (format: ExportFormat) => {
     try {
       const name = await downloadMessage(
@@ -131,7 +140,7 @@ function MessageImpl({
     return (
       <div id={`msg-${message.id}`} className="group flex flex-col items-end">
         {editing ? (
-          <div className="w-full max-w-[85%] space-y-2">
+          <div className="w-full max-w-[90%] space-y-2">
             <Textarea
               autoFocus
               value={draft}
@@ -168,7 +177,7 @@ function MessageImpl({
           <>
             <div
               className={cn(
-                "bg-primary text-primary-foreground max-w-[85%] rounded-xl rounded-br-sm px-4 py-2.5 transition-opacity",
+                "bg-primary text-primary-foreground max-w-[90%] rounded-xl rounded-br-sm px-4 py-2.5 transition-opacity",
                 message.phase === "sending" && "opacity-70"
               )}
             >
@@ -177,12 +186,6 @@ function MessageImpl({
               </p>
             </div>
             <div className="mt-1 flex h-7 items-center gap-1">
-              {message.phase === "sending" && (
-                <span className="text-muted-foreground mr-1 flex items-center gap-1 text-xs">
-                  <span className="bg-primary size-1.5 animate-pulse rounded-full" />
-                  Sending…
-                </span>
-              )}
               <span className="text-muted-foreground mr-1 text-xs opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100">
                 {message.scopeLabel}
                 {message.editedFrom && " · edited"}
@@ -229,9 +232,7 @@ function MessageImpl({
               content={message.content}
               citations={message.citations}
               streaming={message.phase === "streaming"}
-              renderCitation={(citation) => (
-                <CitationChip citation={citation} onOpen={setOpenCitation} />
-              )}
+              renderCitation={renderCitation}
             />
           )}
 
@@ -382,6 +383,15 @@ function MessageImpl({
  * chunk, which would re-render (and re-parse the markdown of) EVERY message
  * in the transcript. Only the message whose object identity changed — plus
  * structural session changes that affect the branch switcher — re-render.
+ *
+ * The previous `Object.keys(messages).length` comparison allocated two arrays
+ * and enumerated all keys for every message on every store write (O(N²) allocs
+ * per token). It's redundant: adding or loading a message always updates
+ * `leafId` (see store `addMessage`/`setSessionTranscript`), and branch changes
+ * update `activeBranchId`/`branches` — all already compared below. We must NOT
+ * compare the `messages` object identity here: it's replaced on every stream
+ * chunk, so doing so would re-render the entire transcript per token, which is
+ * exactly what this memo exists to prevent.
  */
 export const Message = React.memo(MessageImpl, (prev, next) => {
   return (
@@ -389,8 +399,6 @@ export const Message = React.memo(MessageImpl, (prev, next) => {
     prev.session.id === next.session.id &&
     prev.session.leafId === next.session.leafId &&
     prev.session.activeBranchId === next.session.activeBranchId &&
-    prev.session.branches === next.session.branches &&
-    Object.keys(prev.session.messages).length ===
-    Object.keys(next.session.messages).length
+    prev.session.branches === next.session.branches
   )
 })

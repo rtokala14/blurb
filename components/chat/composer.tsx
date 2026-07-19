@@ -69,15 +69,7 @@ const slashCommands = [
   },
 ]
 
-export function Composer({
-  session,
-  isBusy,
-  onSend,
-  onStop,
-  onOpenContext,
-  contextOpen,
-  live = false,
-}: {
+type ComposerProps = {
   session: ChatSession
   isBusy: boolean
   onSend: (text: string, opts?: { docSkillId?: string }) => void
@@ -85,7 +77,17 @@ export function Composer({
   onOpenContext: () => void
   contextOpen: boolean
   live?: boolean
-}) {
+}
+
+function ComposerImpl({
+  session,
+  isBusy,
+  onSend,
+  onStop,
+  onOpenContext,
+  contextOpen,
+  live = false,
+}: ComposerProps) {
   const docs = useOrbit((s) => s.docs)
   const setSessionScope = useOrbit((s) => s.setSessionScope)
   const [value, setValue] = React.useState("")
@@ -125,7 +127,7 @@ export function Composer({
 
   return (
     <div className="bg-background border-t">
-      <div className="mx-auto max-w-3xl px-4 py-3">
+      <div className="mx-auto max-w-4xl px-4 py-3">
         {/* Scope chips */}
         <div className="mb-2 flex flex-wrap items-center gap-1.5">
           <Tooltip>
@@ -354,3 +356,23 @@ export function Composer({
     </div>
   )
 }
+
+/**
+ * Memoized so the composer stops reconciling on every streamed token. The
+ * parent re-renders per stream flush with a new `session` object, but the
+ * composer only depends on a few of its fields — compare those explicitly
+ * (callbacks are stable via the memoized chat controller).
+ */
+export const Composer = React.memo(ComposerImpl, (prev, next) => {
+  return (
+    prev.isBusy === next.isBusy &&
+    prev.contextOpen === next.contextOpen &&
+    prev.live === next.live &&
+    prev.onSend === next.onSend &&
+    prev.onStop === next.onStop &&
+    prev.onOpenContext === next.onOpenContext &&
+    prev.session.id === next.session.id &&
+    prev.session.mode === next.session.mode &&
+    prev.session.scopeDocIds === next.session.scopeDocIds
+  )
+})

@@ -230,6 +230,13 @@ export function useLiveChat(sessionId: string) {
       }
 
       let lastParsedLength = 0
+      // Throttle chat-text store writes: re-parsing the full accumulated
+      // string + rebuilding the sessions array on EVERY chunk re-renders the
+      // whole (non-virtualized) transcript per token. Coalesce to ~60ms; the
+      // final content is always flushed by onComplete below, so nothing is
+      // lost — this only drops intermediate frames the eye can't see anyway.
+      const CHUNK_FLUSH_MS = 60
+      let lastFlushAt = 0
       try {
         await streamTurn(
           rid,
@@ -267,6 +274,9 @@ export function useLiveChat(sessionId: string) {
                 }
                 return
               }
+              const now = Date.now()
+              if (now - lastFlushAt < CHUNK_FLUSH_MS) return
+              lastFlushAt = now
               const parsed = parseStreamingLiveText(accumulated)
               useOrbit.getState().updateMessage(rid, assistantMessageId, {
                 phase: "streaming",
@@ -442,15 +452,18 @@ export function useLiveChat(sessionId: string) {
     [sessionId, loadContent, send]
   )
 
-  return {
-    send,
-    stop,
-    busyId,
-    isBusy: busyId !== null,
-    loadContent,
-    branchFrom,
-    activateBranch,
-    regenerate: branchFrom,
-    editAndBranch,
-  }
+  return React.useMemo(
+    () => ({
+      send,
+      stop,
+      busyId,
+      isBusy: busyId !== null,
+      loadContent,
+      branchFrom,
+      activateBranch,
+      regenerate: branchFrom,
+      editAndBranch,
+    }),
+    [send, stop, busyId, loadContent, branchFrom, activateBranch, editAndBranch]
+  )
 }

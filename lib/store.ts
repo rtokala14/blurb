@@ -23,6 +23,7 @@ import type {
   ChatSession,
   Doc,
   DocFolder,
+  SessionBranchMeta,
   SharePointSite,
 } from "@/lib/types"
 
@@ -102,6 +103,19 @@ interface OrbitState {
     messages: Record<string, ChatMessage>,
     leafId: string | null
   ) => void
+  /**
+   * Apply a full live-transcript load (messages + leaf + branches + derived
+   * artifacts) in a single store update, so opening a session triggers one
+   * render pass instead of three.
+   */
+  hydrateSessionContent: (payload: {
+    sessionId: string
+    messages: Record<string, ChatMessage>
+    leafId: string | null
+    artifacts: Artifact[]
+    branches: SessionBranchMeta[]
+    activeBranchId: string | null
+  }) => void
 
   /* documents */
   addDoc: (doc: Doc) => void
@@ -210,6 +224,43 @@ export const useOrbit = create<OrbitState>((set) => ({
         x.id === id ? { ...x, messages, leafId, contentLoaded: true } : x
       ),
     })),
+  hydrateSessionContent: (payload) =>
+    set((s) => {
+      const { sessionId, messages, leafId, artifacts, branches, activeBranchId } =
+        payload
+      const sessions = s.sessions.map((x) =>
+        x.id === sessionId
+          ? {
+            ...x,
+            messages,
+            leafId,
+            contentLoaded: true,
+            branches,
+            activeBranchId,
+          }
+          : x
+      )
+      // Same artifact reconciliation as setSessionArtifacts: replace this
+      // session's derived/optimistic artifacts and follow the open one if it
+      // was swapped for its derived twin.
+      const kept = s.artifacts.filter(
+        (a) => !(a.live && a.sessionId === sessionId)
+      )
+      const nextArtifacts = [...artifacts, ...kept]
+      const open = s.artifacts.find((a) => a.id === s.openArtifactId)
+      let openArtifactId = s.openArtifactId
+      if (
+        open?.live &&
+        open.sessionId === sessionId &&
+        !nextArtifacts.some((a) => a.id === open.id)
+      ) {
+        const replacement = [...artifacts].sort((a, b) =>
+          b.createdAt.localeCompare(a.createdAt)
+        )[0]
+        openArtifactId = replacement?.id ?? null
+      }
+      return { sessions, artifacts: nextArtifacts, openArtifactId }
+    }),
 
   addDoc: (doc) => set((s) => ({ docs: [doc, ...s.docs] })),
   updateDoc: (id, patch) =>
@@ -309,11 +360,11 @@ export const useOrbit = create<OrbitState>((set) => ({
       sessions: s.sessions.map((x) =>
         x.id === sessionId
           ? {
-              ...x,
-              updatedAt: new Date().toISOString(),
-              messages: { ...x.messages, [message.id]: message },
-              leafId: setAsLeaf ? message.id : x.leafId,
-            }
+            ...x,
+            updatedAt: new Date().toISOString(),
+            messages: { ...x.messages, [message.id]: message },
+            leafId: setAsLeaf ? message.id : x.leafId,
+          }
           : x
       ),
     })),
@@ -401,7 +452,7 @@ export function siblingsOf(
 /** Follow first-children down from a message to find the deepest leaf. */
 export function deepestLeaf(session: ChatSession, fromId: string): string {
   let currentId = fromId
-  for (;;) {
+  for (; ;) {
     const children = Object.values(session.messages)
       .filter((m) => m.parentId === currentId)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
