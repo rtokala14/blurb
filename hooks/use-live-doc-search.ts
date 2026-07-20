@@ -41,9 +41,9 @@ export function useLiveDocSearch(query: string): {
         if (seq !== requestSeq.current) return
         const known = new Set(useOrbit.getState().docs.map((d) => d.id))
         setResults(
-          data
-            .filter((d) => !known.has(d.primaryKey))
-            .map((d) => mapLiveDoc(d, new Map()))
+          data.flatMap((d) =>
+            known.has(d.primaryKey) ? [] : [mapLiveDoc(d, new Map())]
+          )
         )
       } catch {
         if (seq === requestSeq.current) setResults([])

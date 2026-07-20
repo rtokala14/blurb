@@ -237,8 +237,8 @@ function bodyChildren(model: DocModel): (Paragraph | Table)[] {
 }
 
 function referencesChildren(model: DocModel): Paragraph[] {
-  const used = citedNumbers(model.blocks)
-  const cited = model.citations.filter((c) => used.includes(c.n))
+  const used = new Set(citedNumbers(model.blocks))
+  const cited = model.citations.filter((c) => used.has(c.n))
   const list = cited.length > 0 ? cited : model.citations
   if (list.length === 0) return []
   return [

@@ -10,7 +10,7 @@ import {
   Moon,
   PenSquare,
   RefreshCw,
-  Sparkles,
+  Settings,
   Sun,
   Upload,
 } from "lucide-react"
@@ -110,13 +110,13 @@ export function CommandPalette({
             <FolderOpen />
             Documents
           </CommandItem>
-          <CommandItem onSelect={() => run(() => router.push("/studio"))}>
-            <Sparkles />
-            Studio
-          </CommandItem>
           <CommandItem onSelect={() => run(() => router.push("/connections"))}>
             <Cable />
             Connections
+          </CommandItem>
+          <CommandItem onSelect={() => run(() => router.push("/settings"))}>
+            <Settings />
+            Settings
           </CommandItem>
         </CommandGroup>
         <CommandSeparator />

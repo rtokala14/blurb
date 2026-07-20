@@ -4,10 +4,13 @@ import * as React from "react"
 import {
   ChevronRight,
   Cloud,
-  Folder,
-  FolderOpen,
+  FolderPlus,
   Library,
+  MoreHorizontal,
+  Pencil,
   Sparkles,
+  Trash2,
+  Users,
 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
@@ -16,9 +19,26 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { folderSwatchClass } from "@/hooks/use-chat-folders"
 import { cn } from "@/lib/utils"
 import { useOrbit } from "@/lib/store"
 import type { DocFolder } from "@/lib/types"
+
+/** Actions a user folder exposes from its row menu (all optional/local). */
+export type FolderActions = {
+  /** open the create dialog under `parentId` (null = a root-level folder) */
+  onNewSubfolder: (parentId: string | null) => void
+  onEdit: (folder: DocFolder) => void
+  onShare: (folder: DocFolder) => void
+  onDelete: (folder: DocFolder) => void
+}
 
 /** Precomputed tree shape so nodes don't each scan the full folder/doc arrays. */
 type FolderIndex = {
@@ -36,20 +56,22 @@ const FolderNode = React.memo(function FolderNode({
   currentFolderId,
   onSelect,
   index,
+  actions,
 }: {
   folder: DocFolder
   depth: number
   currentFolderId: string | null
   onSelect: (id: string | null) => void
   index: FolderIndex
+  actions?: FolderActions
 }) {
   const children = index.childrenByParent.get(folder.id) ?? EMPTY_FOLDERS
   const count = index.docCountByFolder.get(folder.id) ?? 0
   const active = currentFolderId === folder.id
   const [open, setOpen] = React.useState(false)
 
-  const Icon =
-    folder.source === "sharepoint" ? Cloud : folder.source === "generated" ? Sparkles : active ? FolderOpen : Folder
+  const isUpload = folder.source === "upload"
+  const sharedCount = Math.max((folder.accessEmails?.length ?? 1) - 1, 0)
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
@@ -59,11 +81,19 @@ const FolderNode = React.memo(function FolderNode({
           active && "bg-accent font-medium"
         )}
         style={{ paddingLeft: depth * 14 + 8 }}
+        role="button"
+        tabIndex={0}
         onClick={() => onSelect(folder.id)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault()
+            onSelect(folder.id)
+          }
+        }}
       >
         {children.length > 0 ? (
           <CollapsibleTrigger asChild onClick={(e) => e.stopPropagation()}>
-            <button
+            <button type="button"
               aria-label={open ? "Collapse folder" : "Expand folder"}
               className="hover:bg-muted-foreground/20 -ml-1 rounded p-0.5"
             >
@@ -78,21 +108,67 @@ const FolderNode = React.memo(function FolderNode({
         ) : (
           <span className="w-3.5 shrink-0" />
         )}
-        <Icon
-          className={cn(
-            "size-4 shrink-0",
-            folder.source === "sharepoint"
-              ? "text-sky-600 dark:text-sky-400"
-              : folder.source === "generated"
-                ? "text-violet-600 dark:text-violet-400"
-                : "text-muted-foreground"
-          )}
-        />
+        {folder.source === "sharepoint" ? (
+          <Cloud className="size-4 shrink-0 text-sky-600 dark:text-sky-400" />
+        ) : folder.source === "generated" ? (
+          <Sparkles className="size-4 shrink-0 text-violet-600 dark:text-violet-400" />
+        ) : (
+          <span
+            className={cn(
+              "size-2.5 shrink-0 rounded-full",
+              folderSwatchClass(folder.color)
+            )}
+          />
+        )}
         <span className="min-w-0 flex-1 truncate">{folder.name}</span>
+        {isUpload && sharedCount > 0 && (
+          <Users className="text-muted-foreground size-3 shrink-0" />
+        )}
         {count > 0 && (
           <span className="text-muted-foreground text-xs tabular-nums">
             {count}
           </span>
+        )}
+        {isUpload && actions && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+              <button
+                type="button"
+                aria-label={`Actions for ${folder.name}`}
+                className="hover:bg-muted-foreground/20 text-muted-foreground -mr-1 rounded p-0.5 opacity-0 group-hover:opacity-100 data-[state=open]:opacity-100"
+              >
+                <MoreHorizontal className="size-3.5" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="start"
+              side="right"
+              className="w-44"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <DropdownMenuItem onClick={() => actions.onNewSubfolder(folder.id)}>
+                <FolderPlus /> New subfolder
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => actions.onEdit(folder)}>
+                <Pencil /> Rename &amp; color
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => actions.onShare(folder)}>
+                <Users /> Share
+                {sharedCount > 0 && (
+                  <span className="text-muted-foreground ml-auto text-xs">
+                    {sharedCount}
+                  </span>
+                )}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                variant="destructive"
+                onClick={() => actions.onDelete(folder)}
+              >
+                <Trash2 /> Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         )}
       </div>
       {children.length > 0 && (
@@ -105,6 +181,7 @@ const FolderNode = React.memo(function FolderNode({
               currentFolderId={currentFolderId}
               onSelect={onSelect}
               index={index}
+              actions={actions}
             />
           ))}
         </CollapsibleContent>
@@ -118,9 +195,11 @@ const EMPTY_FOLDERS: DocFolder[] = []
 export function FolderTree({
   currentFolderId,
   onSelect,
+  actions,
 }: {
   currentFolderId: string | null
   onSelect: (id: string | null) => void
+  actions?: FolderActions
 }) {
   const folders = useOrbit((s) => s.folders)
   const docs = useOrbit((s) => s.docs)
@@ -153,9 +232,10 @@ export function FolderTree({
   return (
     <div className="space-y-4">
       <div>
-        <div
+        <button
+          type="button"
           className={cn(
-            "hover:bg-accent flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm",
+            "hover:bg-accent flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm",
             currentFolderId === null && "bg-accent font-medium"
           )}
           onClick={() => onSelect(null)}
@@ -165,24 +245,37 @@ export function FolderTree({
           <span className="text-muted-foreground text-xs tabular-nums">
             {docs.length}
           </span>
-        </div>
+        </button>
       </div>
       <div>
-        <p className="text-muted-foreground mb-1 px-2 text-xs font-medium">
-          Folders
-        </p>
-        {roots
-          .filter((f) => f.source !== "sharepoint")
-          .map((folder) => (
-            <FolderNode
-              key={folder.id}
-              folder={folder}
-              depth={0}
-              currentFolderId={currentFolderId}
-              onSelect={onSelect}
-              index={index}
-            />
-          ))}
+        <div className="mb-1 flex items-center justify-between px-2">
+          <p className="text-muted-foreground text-xs font-medium">Folders</p>
+          {actions && (
+            <button
+              type="button"
+              aria-label="New top-level folder"
+              className="hover:bg-accent text-muted-foreground rounded p-0.5"
+              onClick={() => actions.onNewSubfolder(null)}
+            >
+              <FolderPlus className="size-3.5" />
+            </button>
+          )}
+        </div>
+        {roots.flatMap((folder) =>
+          folder.source !== "sharepoint"
+            ? [
+                <FolderNode
+                  key={folder.id}
+                  folder={folder}
+                  depth={0}
+                  currentFolderId={currentFolderId}
+                  onSelect={onSelect}
+                  index={index}
+                  actions={actions}
+                />,
+              ]
+            : []
+        )}
       </div>
       <div>
         <div className="mb-1 flex items-center justify-between px-2">
@@ -191,18 +284,21 @@ export function FolderTree({
             {spCount} synced
           </Badge>
         </div>
-        {roots
-          .filter((f) => f.source === "sharepoint")
-          .map((folder) => (
-            <FolderNode
-              key={folder.id}
-              folder={folder}
-              depth={0}
-              currentFolderId={currentFolderId}
-              onSelect={onSelect}
-              index={index}
-            />
-          ))}
+        {roots.flatMap((folder) =>
+          folder.source === "sharepoint"
+            ? [
+                <FolderNode
+                  key={folder.id}
+                  folder={folder}
+                  depth={0}
+                  currentFolderId={currentFolderId}
+                  onSelect={onSelect}
+                  index={index}
+                  actions={actions}
+                />,
+              ]
+            : []
+        )}
       </div>
     </div>
   )

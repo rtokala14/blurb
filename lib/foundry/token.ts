@@ -72,9 +72,3 @@ export async function getFoundryToken(): Promise<string> {
   }
   return inFlight
 }
-
-/** For tests. */
-export function __resetTokenCache() {
-  cached = null
-  inFlight = null
-}

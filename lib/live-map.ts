@@ -26,8 +26,6 @@ import type {
 export function docTypeFromName(name: string): DocType {
   const ext = name.split(".").pop()?.toLowerCase()
   if (ext === "docx" || ext === "doc") return "docx"
-  if (ext === "xlsx" || ext === "xls") return "xlsx"
-  if (ext === "pptx" || ext === "ppt") return "pptx"
   if (ext === "csv") return "csv"
   if (ext === "md") return "md"
   return "pdf"

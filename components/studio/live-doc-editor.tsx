@@ -248,7 +248,8 @@ export function LiveDocEditor({
           ? sectionBlockIds(model, selectedId)
           : [selectedId]
         : model.blocks.map((b) => b.id)
-      const targetBlocks = model.blocks.filter((b) => targetIds.includes(b.id))
+      const targetIdSet = new Set(targetIds)
+      const targetBlocks = model.blocks.filter((b) => targetIdSet.has(b.id))
       const fragment = blocksToMarkdown(targetBlocks, model.citations, "tags")
       try {
         const { text } = await liveApi.refine({
@@ -293,7 +294,8 @@ export function LiveDocEditor({
   const acceptPending = () => {
     if (!pending || !model) return
     const start = model.blocks.findIndex((b) => b.id === pending.targetIds[0])
-    const blocks = model.blocks.filter((b) => !pending.targetIds.includes(b.id))
+    const targetIdSet = new Set(pending.targetIds)
+    const blocks = model.blocks.filter((b) => !targetIdSet.has(b.id))
     blocks.splice(start < 0 ? blocks.length : start, 0, ...pending.newBlocks)
     commit(
       { ...model, blocks, citations: pending.citations },
@@ -347,10 +349,17 @@ export function LiveDocEditor({
     ? model.blocks.findIndex((b) => b.id === pending.targetIds[0])
     : -1
   const usedCitations = (() => {
-    const used = citedNumbers(model.blocks)
-    const cited = model.citations.filter((c) => used.includes(c.n))
+    const used = new Set(citedNumbers(model.blocks))
+    const cited = model.citations.filter((c) => used.has(c.n))
     return cited.length > 0 ? cited : model.citations
   })()
+
+  // Hoisted O(1) lookups for the per-block render loop below (built once,
+  // not rescanned for every block). selectedBlockIds also avoids recomputing
+  // sectionBlockIds() on every iteration.
+  const pendingTargetIds = new Set(pending?.targetIds ?? [])
+  const selectedBlockIds =
+    selectedId !== null ? new Set(sectionBlockIds(model, selectedId)) : null
 
   return (
     <div className="flex h-full flex-col">
@@ -397,10 +406,10 @@ export function LiveDocEditor({
           </p>
 
           {model.blocks.map((block, index) => {
-            const isTarget = pending?.targetIds.includes(block.id) ?? false
+            const isTarget = pendingTargetIds.has(block.id)
             const isSelected =
-              !pending && selectedId !== null &&
-              sectionBlockIds(model, selectedId).includes(block.id)
+              !pending && selectedBlockIds !== null &&
+              selectedBlockIds.has(block.id)
             const editingThis = manualEdit?.blockId === block.id
 
             return (
@@ -472,6 +481,14 @@ export function LiveDocEditor({
                       !generating && !pending &&
                       setSelectedId(selectedId === block.id ? null : block.id)
                     }
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault()
+                        if (!generating && !pending) {
+                          setSelectedId(selectedId === block.id ? null : block.id)
+                        }
+                      }
+                    }}
                     className={cn(
                       "group relative -mx-2 rounded-md px-2 transition-colors",
                       !generating && !pending && "hover:bg-accent/40 cursor-pointer",
@@ -481,7 +498,7 @@ export function LiveDocEditor({
                   >
                     <BlockView block={block} citations={model.citations} />
                     {!generating && !pending && !isTarget && (
-                      <button
+                      <button type="button"
                         aria-label="Edit this block"
                         className="text-muted-foreground hover:text-foreground bg-background absolute top-1 -right-6 hidden rounded p-0.5 group-hover:block"
                         onClick={(e) => {

@@ -47,12 +47,16 @@ export function ChatFolderDialog({
   const [color, setColor] = React.useState<ChatFolderColor>("slate")
   const [saving, setSaving] = React.useState(false)
 
-  React.useEffect(() => {
+  const [prevOpen, setPrevOpen] = React.useState(open)
+  const [prevFolder, setPrevFolder] = React.useState(folder)
+  if (open !== prevOpen || folder !== prevFolder) {
+    setPrevOpen(open)
+    setPrevFolder(folder)
     if (open) {
       setName(folder?.name ?? "")
-      setColor(((folder?.color as ChatFolderColor) ?? "slate"))
+      setColor((folder?.color as ChatFolderColor) ?? "slate")
     }
-  }, [open, folder])
+  }
 
   const save = async () => {
     const trimmed = name.trim()
@@ -137,9 +141,11 @@ export function DeleteChatFolderDialog({
   const [mode, setMode] = React.useState<"keep" | "delete">("keep")
   const [deleting, setDeleting] = React.useState(false)
 
-  React.useEffect(() => {
+  const [prevOpen, setPrevOpen] = React.useState(open)
+  if (open !== prevOpen) {
+    setPrevOpen(open)
     if (open) setMode("keep")
-  }, [open])
+  }
 
   if (!folder) return null
   const memberCount = sessions.filter((s) => s.chatFolderId === folder.id).length

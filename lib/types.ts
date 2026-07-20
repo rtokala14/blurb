@@ -5,7 +5,7 @@ import type { DocModel, DocVersionEntry } from "@/lib/docgen/model"
 /* Documents                                                           */
 /* ------------------------------------------------------------------ */
 
-export type DocType = "pdf" | "docx" | "xlsx" | "pptx" | "csv" | "md"
+export type DocType = "pdf" | "docx" | "csv" | "md"
 
 export type DocSource = "upload" | "sharepoint" | "generated"
 
@@ -23,6 +23,8 @@ export interface DocFolder {
   parentId: string | null
   source: DocSource
   sharePointPath?: string
+  /** color token: slate | sky | indigo | teal | emerald | amber | rose */
+  color?: string | null
   /** live mode: folder creator (share management is creator-only) */
   createdBy?: string
   /** live mode: emails with access (includes the creator) */
@@ -91,7 +93,7 @@ export interface Citation {
   pagesLabel?: string
 }
 
-export type ArtifactKind = "doc" | "sheet" | "deck"
+export type ArtifactKind = "doc"
 
 export type ArtifactStatus = "queued" | "generating" | "ready"
 
@@ -177,8 +179,6 @@ export interface ChatSession {
   chatFolderId?: string | null
   /** live mode: "regular" | "thinking" — the agent used for new turns */
   mode?: string
-  /** built-in persona attached to this session (null = none) */
-  personaId?: string | null
 }
 
 /** Private folder for organizing chat sessions (live mode). */

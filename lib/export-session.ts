@@ -39,9 +39,9 @@ function cleanContent(message: ChatMessage): string {
 }
 
 function buildTurns(session: ChatSession, options: ExportOptions): Turn[] {
-  return activePath(session)
-    .filter((m) => m.content.trim())
-    .map((m) => ({
+  return activePath(session).flatMap((m) =>
+    m.content.trim()
+      ? [{
       role: m.role === "user" ? ("You" as const) : ("Orbit Docs" as const),
       content: cleanContent(m),
       thinking:
@@ -57,7 +57,9 @@ function buildTurns(session: ChatSession, options: ExportOptions): Turn[] {
             pages: c.pagesLabel || (c.page ? String(c.page) : ""),
           }))
         : [],
-    }))
+        }]
+      : []
+  )
 }
 
 /* ------------------------------------------------------------------ */

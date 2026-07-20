@@ -97,12 +97,12 @@ export async function complete(options: CompleteOptions): Promise<string> {
     if (provider === "anthropic") {
         // Anthropic keeps the system prompt out of the messages array.
         const system = options.messages
-            .filter((m) => m.role === "system")
-            .map((m) => m.content)
+            .flatMap((m) => (m.role === "system" ? [m.content] : []))
             .join("\n\n")
         const messages = options.messages
-            .filter((m) => m.role !== "system")
-            .map((m) => ({ role: m.role, content: m.content }))
+            .flatMap((m) =>
+                m.role !== "system" ? [{ role: m.role, content: m.content }] : []
+            )
         const res = await proxyFetch(
             "anthropic",
             "/messages",
@@ -119,8 +119,11 @@ export async function complete(options: CompleteOptions): Promise<string> {
         )
         const data = (await res.json()) as AnthropicMessageResponse
         return (data.content ?? [])
-            .filter((b) => b.type === "text" && typeof b.text === "string")
-            .map((b) => b.text as string)
+            .flatMap((b) =>
+                b.type === "text" && typeof b.text === "string"
+                    ? [b.text as string]
+                    : []
+            )
             .join("")
             .trim()
     }

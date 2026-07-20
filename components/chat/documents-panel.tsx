@@ -46,7 +46,7 @@ function collectDescendantDocIds(
   folders: DocFolder[],
   selectable: Doc[]
 ): string[] {
-  const ids = selectable.filter((d) => d.folderId === folderId).map((d) => d.id)
+  const ids = selectable.flatMap((d) => (d.folderId === folderId ? [d.id] : []))
   for (const child of folders.filter((f) => f.parentId === folderId)) {
     ids.push(...collectDescendantDocIds(child.id, folders, selectable))
   }
@@ -83,7 +83,7 @@ function DocRow({
         onCheckedChange={toggle}
       />
       <DocIcon type={doc.type} />
-      <button
+      <button type="button"
         className={cn(
           "min-w-0 flex-1 cursor-pointer truncate text-left text-sm",
           !ready && "text-muted-foreground"
@@ -173,7 +173,7 @@ function FolderNode({
         style={{ paddingLeft: depth * 14 + 6 }}
       >
         <CollapsibleTrigger asChild>
-          <button
+          <button type="button"
             aria-label={open ? "Collapse folder" : "Expand folder"}
             className="hover:bg-muted-foreground/20 rounded p-0.5"
           >
@@ -205,7 +205,7 @@ function FolderNode({
                 : "text-muted-foreground"
           )}
         />
-        <button
+        <button type="button"
           className="min-w-0 flex-1 cursor-pointer truncate text-left text-sm font-medium"
           onClick={() => setOpen((v) => !v)}
         >
@@ -395,23 +395,22 @@ export function DocumentsPanel({
                 />
               ))}
               {/* uploads that aren't filed in any folder */}
-              {docs
-                .filter(
-                  (d) =>
-                    d.folderId === null &&
-                    d.source !== "sharepoint" &&
-                    matches(d)
-                )
-                .map((doc) => (
-                  <DocRow
-                    key={doc.id}
-                    doc={doc}
-                    depth={0}
-                    selected={selected}
-                    onToggle={toggleDoc}
-                    onPreview={setPreviewDoc}
-                  />
-                ))}
+              {docs.flatMap((doc) =>
+                doc.folderId === null &&
+                doc.source !== "sharepoint" &&
+                matches(doc)
+                  ? [
+                      <DocRow
+                        key={doc.id}
+                        doc={doc}
+                        depth={0}
+                        selected={selected}
+                        onToggle={toggleDoc}
+                        onPreview={setPreviewDoc}
+                      />,
+                    ]
+                  : []
+              )}
               {/* corpus-wide matches from Foundry beyond the loaded page */}
               {searching && (
                 <p className="text-muted-foreground flex items-center gap-1.5 px-2 py-1.5 text-xs">

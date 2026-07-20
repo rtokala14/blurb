@@ -27,7 +27,7 @@ export async function GET(
     if (normalizeEmail(doc.addedBy) !== normalizeEmail(userEmail)) {
       const folders = await getAccessibleFolders(userEmail)
       const shared = folders.some((f) =>
-        (f.contents ?? []).map(String).includes(pk)
+        (f.contents ?? []).some((c) => String(c) === pk)
       )
       if (!shared) return json({ error: "Not allowed" }, { status: 403 })
     }

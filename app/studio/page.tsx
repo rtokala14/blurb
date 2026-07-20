@@ -4,7 +4,7 @@ import * as React from "react"
 import Link from "next/link"
 import { Sparkles } from "lucide-react"
 
-import { artifactMeta } from "@/components/chat/artifact-card"
+import { artifactMeta } from "@/components/chat/artifact-meta"
 import { StudioPanel } from "@/components/studio/studio-panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -36,8 +36,7 @@ export default function StudioPage() {
           </EmptyMedia>
           <EmptyTitle>Nothing drafted yet</EmptyTitle>
           <EmptyDescription>
-            Ask the assistant to create a document, spreadsheet, or deck — try
-            “/doc”, “/sheet”, or “/deck” in chat.
+            Ask the assistant to create a document — try “/doc” in chat.
           </EmptyDescription>
         </EmptyHeader>
         <Button asChild>
@@ -54,8 +53,8 @@ export default function StudioPage() {
         <div className="border-b px-4 py-3">
           <h2 className="text-sm font-semibold">AI artifacts</h2>
           <p className="text-muted-foreground text-xs">
-            Documents, spreadsheets, and decks drafted by the agent — every
-            figure traceable to a source.
+            Documents drafted by the agent — every figure traceable to a
+            source.
           </p>
         </div>
         <ScrollArea className="min-h-0 flex-1">
@@ -63,7 +62,7 @@ export default function StudioPage() {
             {artifacts.map((artifact) => {
               const meta = artifactMeta[artifact.kind]
               return (
-                <button
+                <button type="button"
                   key={artifact.id}
                   onClick={() => setSelectedId(artifact.id)}
                   className={cn(

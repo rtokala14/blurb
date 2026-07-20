@@ -8,11 +8,9 @@ import {
   ClipboardCheck,
   ClipboardList,
   FilePlus2,
-  FileSpreadsheet,
   FileText,
   FolderSearch,
   MessageSquareReply,
-  Presentation,
   Sparkles,
   Square,
   TrendingUp,
@@ -22,7 +20,6 @@ import {
 } from "lucide-react"
 
 import { DocIcon } from "@/components/doc-icon"
-import { PersonaChip } from "@/components/chat/persona-picker"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Kbd } from "@/components/ui/kbd"
@@ -55,18 +52,6 @@ const slashCommands = [
     label: "Draft a document",
     hint: "Brief, memo, report — grounded in scope",
   },
-  {
-    command: "/sheet",
-    icon: FileSpreadsheet,
-    label: "Build a spreadsheet",
-    hint: "Model or tracker with sourced inputs",
-  },
-  {
-    command: "/deck",
-    icon: Presentation,
-    label: "Create a presentation",
-    hint: "Slides with speaker notes & citations",
-  },
 ]
 
 type ComposerProps = {
@@ -95,7 +80,8 @@ function ComposerImpl({
   const [pendingSkill, setPendingSkill] = React.useState<DocSkill | null>(null)
   const textareaRef = React.useRef<HTMLTextAreaElement>(null)
 
-  const scopeDocs = docs.filter((d) => session.scopeDocIds.includes(d.id))
+  const scopeIds = new Set(session.scopeDocIds)
+  const scopeDocs = docs.filter((d) => scopeIds.has(d.id))
   const showSlash = value.startsWith("/") && !value.includes(" ")
   const filteredCommands = slashCommands.filter((c) =>
     c.command.startsWith(value.toLowerCase())
@@ -156,7 +142,7 @@ function ComposerImpl({
             >
               <DocIcon type={doc.type} className="size-3" />
               <span className="truncate">{doc.name}</span>
-              <button
+              <button type="button"
                 aria-label={`Remove ${doc.name} from scope`}
                 className="hover:bg-muted-foreground/20 rounded-full p-0.5"
                 onClick={() =>
@@ -190,7 +176,7 @@ function ComposerImpl({
             {filteredSkills.map((skill) => {
               const Icon = SKILL_ICONS[skill.icon] ?? FileText
               return (
-                <button
+                <button type="button"
                   key={skill.id}
                   className="hover:bg-accent flex w-full items-center gap-3 px-3 py-2 text-left"
                   onClick={() => pickSkill(skill)}
@@ -210,7 +196,7 @@ function ComposerImpl({
         {showSlash && !live && filteredCommands.length > 0 && (
           <div className="bg-popover mb-2 overflow-hidden rounded-lg border shadow-md">
             {filteredCommands.map((cmd) => (
-              <button
+              <button type="button"
                 key={cmd.command}
                 className="hover:bg-accent flex w-full items-center gap-3 px-3 py-2 text-left"
                 onClick={() => {
@@ -269,7 +255,7 @@ function ComposerImpl({
                   <FilePlus2 />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Create a doc, sheet, or deck</TooltipContent>
+              <TooltipContent>Draft a document</TooltipContent>
             </Tooltip>
             {live && (
               <Tooltip>
@@ -301,7 +287,6 @@ function ComposerImpl({
                 </TooltipContent>
               </Tooltip>
             )}
-            {live && <PersonaChip sessionId={session.id} />}
             {live && pendingSkill && (
               <Badge variant="secondary" className="h-7 gap-1.5 pr-1 pl-2 font-normal">
                 {(() => {

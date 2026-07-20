@@ -14,7 +14,7 @@ const TOKENS_PER_TICK = 2
 /**
  * Drives the fully client-side chat placeholder: thinking steps appear one
  * by one, the answer streams token by token, and artifact generation is
- * kicked off when the prompt asks for a document/spreadsheet/deck.
+ * kicked off when the prompt asks for a document.
  */
 export function useChatSimulation(sessionId: string) {
   const [busyId, setBusyId] = React.useState<string | null>(null)
@@ -166,7 +166,8 @@ export function useChatSimulation(sessionId: string) {
         })
       }
 
-      const scopeDocs = docs.filter((d) => session.scopeDocIds.includes(d.id))
+      const scopeIds = new Set(session.scopeDocIds)
+      const scopeDocs = docs.filter((d) => scopeIds.has(d.id))
       runAssistant(userId, simulateResponse(text, scopeDocs))
     },
     [sessionId, runAssistant]
@@ -179,7 +180,8 @@ export function useChatSimulation(sessionId: string) {
       if (!session || !assistantMessage.parentId) return
       const userMessage = session.messages[assistantMessage.parentId]
       if (!userMessage) return
-      const scopeDocs = docs.filter((d) => session.scopeDocIds.includes(d.id))
+      const scopeIds = new Set(session.scopeDocIds)
+      const scopeDocs = docs.filter((d) => scopeIds.has(d.id))
       runAssistant(
         userMessage.id,
         varyResponse(simulateResponse(userMessage.content, scopeDocs))
@@ -204,7 +206,8 @@ export function useChatSimulation(sessionId: string) {
         scopeLabel: userMessage.scopeLabel,
         editedFrom: userMessage.id,
       })
-      const scopeDocs = docs.filter((d) => session.scopeDocIds.includes(d.id))
+      const scopeIds = new Set(session.scopeDocIds)
+      const scopeDocs = docs.filter((d) => scopeIds.has(d.id))
       runAssistant(newUserId, simulateResponse(newText, scopeDocs))
       toast("Branched the conversation", {
         description: "The previous reply is still available via the branch switcher.",

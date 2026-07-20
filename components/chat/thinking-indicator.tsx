@@ -39,13 +39,14 @@ export function ThinkingIndicator({ message }: { message: ChatMessage }) {
   const active = message.phase === "thinking"
   const [open, setOpen] = React.useState(active)
 
-  /* auto-collapse once the answer starts streaming */
-  const wasActive = React.useRef(active)
-  React.useEffect(() => {
-    if (wasActive.current && !active) setOpen(false)
-    if (active) setOpen(true)
-    wasActive.current = active
-  }, [active])
+  /* Follow `active` (expand while thinking, auto-collapse once the answer
+     starts streaming) without an effect: adjust during render on the
+     transition, which leaves the user's manual toggles untouched otherwise. */
+  const [prevActive, setPrevActive] = React.useState(active)
+  if (active !== prevActive) {
+    setPrevActive(active)
+    setOpen(active)
+  }
 
   if (thinking.length === 0 && !active) return null
 

@@ -45,12 +45,23 @@ export function ShareDialog({
   const [draft, setDraft] = React.useState("")
   const [saving, setSaving] = React.useState(false)
 
-  React.useEffect(() => {
+  const [prevOpen, setPrevOpen] = React.useState(open)
+  const [prevEmails, setPrevEmails] = React.useState(emails)
+  if (open !== prevOpen || emails !== prevEmails) {
+    setPrevOpen(open)
+    setPrevEmails(emails)
     if (open) {
-      setList([...new Set(emails.map((e) => e.trim().toLowerCase()).filter(Boolean))])
+      setList([
+        ...new Set(
+          emails.flatMap((e) => {
+            const email = e.trim().toLowerCase()
+            return email ? [email] : []
+          })
+        ),
+      ])
       setDraft("")
     }
-  }, [open, emails])
+  }
 
   const owner = (ownerEmail ?? "").trim().toLowerCase()
 
@@ -137,7 +148,7 @@ export function ShareDialog({
               >
                 <UserRound className="text-muted-foreground size-3.5 shrink-0" />
                 <span className="min-w-0 flex-1 truncate">{email}</span>
-                <button
+                <button type="button"
                   aria-label={`Remove ${email}`}
                   className="hover:bg-muted-foreground/20 rounded-full p-0.5"
                   onClick={() => setList((prev) => prev.filter((e) => e !== email))}

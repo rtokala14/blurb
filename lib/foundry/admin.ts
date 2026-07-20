@@ -152,9 +152,9 @@ export async function getDocCensus(): Promise<DocCensus> {
       ),
     ])
     const indexedKeys = new Set(
-      statusRows
-        .filter((s) => s.isIndexingComplete && s.docKey)
-        .map((s) => String(s.docKey))
+      statusRows.flatMap((s) =>
+        s.isIndexingComplete && s.docKey ? [String(s.docKey)] : []
+      )
     )
     const census: DocCensus = {
       totalActive: 0,
@@ -250,7 +250,7 @@ export async function collectOverview(options: OverviewOptions) {
     ])
 
   const adminEmails = new Set(
-    users.filter((u) => u.isAdmin).map((u) => normalizeEmail(u.email))
+    users.flatMap((u) => (u.isAdmin ? [normalizeEmail(u.email)] : []))
   )
   adminEmails.delete("")
   const excludeOwner = (owner: string) =>
@@ -373,24 +373,31 @@ export async function collectOverview(options: OverviewOptions) {
   }
 
   /* near-quota users */
-  const nearQuota = users
-    .filter((u) => u.isActive !== false && (options.includeAdmins || !u.isAdmin))
-    .map((u) => serializeAdminUser(u, usageToday.get(normalizeEmail(u.email)) ?? 0))
-    .filter(
-      (u) => u.uploadsRemainingToday !== null && u.uploadsRemainingToday <= 2
+  const nearQuota = users.flatMap((u) => {
+    if (!(u.isActive !== false && (options.includeAdmins || !u.isAdmin))) return []
+    const serialized = serializeAdminUser(
+      u,
+      usageToday.get(normalizeEmail(u.email)) ?? 0
     )
+    return serialized.uploadsRemainingToday !== null &&
+      serialized.uploadsRemainingToday <= 2
+      ? [serialized]
+      : []
+  })
 
   /* power users */
   const powerUsers = [...perUser.entries()]
-    .filter(([email, s]) => email && s.sessions + s.turns + s.documents > 0)
-    .map(([email, s]) => {
+    .flatMap(([email, s]) => {
+      if (!(email && s.sessions + s.turns + s.documents > 0)) return []
       const user = users.find((u) => normalizeEmail(u.email) === email)
-      return {
-        email,
-        name: user?.name || deriveNameFromEmail(email),
-        isAdmin: Boolean(user?.isAdmin),
-        ...s,
-      }
+      return [
+        {
+          email,
+          name: user?.name || deriveNameFromEmail(email),
+          isAdmin: Boolean(user?.isAdmin),
+          ...s,
+        },
+      ]
     })
     .sort(
       (a, b) =>

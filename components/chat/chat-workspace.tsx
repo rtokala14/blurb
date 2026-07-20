@@ -14,11 +14,10 @@ import {
 } from "lucide-react"
 
 import { Composer } from "@/components/chat/composer"
-import { PersonaPicker } from "@/components/chat/persona-picker"
 import { getBuiltinPersona } from "@/lib/personas"
 import { DocumentsPanel } from "@/components/chat/documents-panel"
 import { ExportDialog } from "@/components/chat/export-dialog"
-import { isEditableTarget } from "@/components/keyboard-shortcuts"
+import { isEditableTarget } from "@/components/keyboard-shortcuts-utils"
 import { Message } from "@/components/chat/message"
 import { TurnsNavigator } from "@/components/chat/turns-navigator"
 import { useChat } from "@/components/chat/use-chat"
@@ -61,7 +60,7 @@ const suggestions = [
   "Which vendors are up for renewal this quarter?",
   "What termination rights do we have in the Acme MSA?",
   "/doc Draft a renewal negotiation brief for Acme",
-  "/deck Build a QBR deck from the Q3 forecast",
+  "/doc Summarize the Q3 forecast as a one-page brief",
 ]
 
 /** Live mode gets grounded, discipline-neutral starters (no demo commands). */
@@ -81,6 +80,8 @@ export function ChatWorkspace() {
   const openArtifactId = useOrbit((s) => s.openArtifactId)
   const setOpenArtifact = useOrbit((s) => s.setOpenArtifact)
   const artifacts = useOrbit((s) => s.artifacts)
+  const personaId = useOrbit((s) => s.userProfile.personaId)
+  const activePersona = getBuiltinPersona(personaId)
 
   const session = sessions.find((s) => s.id === activeSessionId) ?? sessions[0]
   const openArtifact = artifacts.find((a) => a.id === openArtifactId) ?? null
@@ -272,6 +273,13 @@ export function ChatWorkspace() {
     return () => document.removeEventListener("keydown", onKey)
   }, [])
 
+  // Declared before the early return below so this hook runs on every render.
+  const jumpTo = React.useCallback((messageId: string) => {
+    document
+      .getElementById(`msg-${messageId}`)
+      ?.scrollIntoView({ behavior: "smooth", block: "start" })
+  }, [])
+
   if (!session) {
     return (
       <Empty className="flex-1">
@@ -288,12 +296,6 @@ export function ChatWorkspace() {
       </Empty>
     )
   }
-
-  const jumpTo = React.useCallback((messageId: string) => {
-    document
-      .getElementById(`msg-${messageId}`)
-      ?.scrollIntoView({ behavior: "smooth", block: "start" })
-  }, [])
 
   return (
     <div className="flex min-h-0 flex-1">
@@ -365,8 +367,6 @@ export function ChatWorkspace() {
                   </DropdownMenuContent>
                 </DropdownMenu>
               )}
-
-              <PersonaPicker sessionId={session.id} />
 
               {branches > 1 && (
                 <Tooltip>
@@ -461,18 +461,18 @@ export function ChatWorkspace() {
                         <FolderSearch /> Select documents
                       </Button>
                     )}
-                    {getBuiltinPersona(session.personaId) && (
+                    {activePersona && (
                       <p className="text-muted-foreground -mb-2 text-xs">
                         Starter prompts for{" "}
                         <span className="text-foreground font-medium">
-                          {getBuiltinPersona(session.personaId)!.name}
+                          {activePersona.name}
                         </span>
                       </p>
                     )}
                     <div className="grid w-full max-w-lg grid-cols-1 gap-2">
-                      {(getBuiltinPersona(session.personaId)?.samplePrompts ??
+                      {(activePersona?.samplePrompts ??
                         (sim.live ? liveSuggestions : suggestions)).map((s) => (
-                          <button
+                          <button type="button"
                             key={s}
                             onClick={() => sim.send(s)}
                             className="hover:bg-accent text-muted-foreground hover:text-foreground hover:border-ring/50 rounded-lg border px-3 py-2 text-left text-sm transition-colors"

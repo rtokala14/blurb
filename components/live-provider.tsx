@@ -3,42 +3,11 @@
 import * as React from "react"
 import { toast } from "sonner"
 
-import { liveApi, type LiveBootstrap } from "@/lib/live-api"
-import {
-  mapLiveChatFolder,
-  mapLiveDoc,
-  mapLiveFolders,
-  mapLiveSession,
-  mapSyncSources,
-} from "@/lib/live-map"
-import { sessionPersonaFor, useOrbit } from "@/lib/store"
+import { liveApi } from "@/lib/live-api"
+import { useOrbit } from "@/lib/store"
+import { hydrateFromBootstrap } from "@/components/live-hydrate"
 
 const DOC_STATUS_POLL_MS = 30_000
-
-/** doc pk -> containing folder id, captured at hydrate for later page loads */
-let lastFolderByDocId = new Map<string, string>()
-
-export function hydrateFromBootstrap(data: LiveBootstrap) {
-  const { folders, folderByDocId } = mapLiveFolders(data.folders)
-  lastFolderByDocId = folderByDocId
-  const sync = mapSyncSources(data.syncSources)
-  const docs = data.documents.map((doc) => mapLiveDoc(doc, folderByDocId))
-  const sites = sync.sites.map((site) => ({
-    ...site,
-    docCount: docs.filter((d) => d.folderId === site.mappedFolderId).length,
-  }))
-  useOrbit.getState().hydrateLive({
-    docs,
-    folders: [...folders, ...sync.folders],
-    // restore each session's persona choice from client-side storage (v1)
-    sessions: data.sessions.map((s) => {
-      const session = mapLiveSession(s)
-      return { ...session, personaId: sessionPersonaFor(session.id) }
-    }),
-    sites,
-    chatFolders: (data.chatFolders ?? []).map(mapLiveChatFolder),
-  })
-}
 
 /**
  * Full-screen gate shown while the user identity + bootstrap resolve, so
@@ -89,6 +58,11 @@ function ConnectingSplash({ label }: { label: string }) {
 export function LiveProvider({ children }: { children: React.ReactNode }) {
   const live = useOrbit((s) => s.live)
   const liveHydrated = useOrbit((s) => s.liveHydrated)
+
+  // Restore the per-user profile/persona from localStorage once on the client.
+  React.useEffect(() => {
+    useOrbit.getState().hydrateUserProfile()
+  }, [])
 
   React.useEffect(() => {
     let cancelled = false
@@ -160,20 +134,4 @@ export function LiveProvider({ children }: { children: React.ReactNode }) {
     return <ConnectingSplash label="Loading your documents and sessions from Foundry…" />
   }
   return <>{children}</>
-}
-
-/**
- * Grow the loaded document window ("Load more" in the library). Refetches
- * the newest `limit` docs and replaces the store's doc list, preserving any
- * locally-adopted extras (search hits, synced files in scope).
- */
-export async function loadMoreLiveDocs(limit: number): Promise<number> {
-  const { liveApi } = await import("@/lib/live-api")
-  const { data } = await liveApi.docs(limit)
-  const mapped = data.map((doc) => mapLiveDoc(doc, lastFolderByDocId))
-  const store = useOrbit.getState()
-  const fetchedIds = new Set(mapped.map((d) => d.id))
-  const extras = store.docs.filter((d) => !fetchedIds.has(d.id))
-  useOrbit.setState({ docs: [...mapped, ...extras] })
-  return mapped.length
 }

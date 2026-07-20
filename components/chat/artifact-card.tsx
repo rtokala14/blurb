@@ -1,39 +1,13 @@
 "use client"
 
-import {
-  FileSpreadsheet,
-  FileText,
-  PanelRightOpen,
-  Presentation,
-} from "lucide-react"
+import { PanelRightOpen } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 import { TimeAgo } from "@/components/time-ago"
 import { useOrbit } from "@/lib/store"
-import type { ArtifactKind } from "@/lib/types"
-
-export const artifactMeta: Record<
-  ArtifactKind,
-  { icon: React.ElementType; label: string; className: string }
-> = {
-  doc: {
-    icon: FileText,
-    label: "Document",
-    className: "text-blue-600 dark:text-blue-400",
-  },
-  sheet: {
-    icon: FileSpreadsheet,
-    label: "Spreadsheet",
-    className: "text-emerald-600 dark:text-emerald-400",
-  },
-  deck: {
-    icon: Presentation,
-    label: "Presentation",
-    className: "text-orange-600 dark:text-orange-400",
-  },
-}
+import { artifactMeta } from "@/components/chat/artifact-meta"
 
 export function ArtifactCard({ artifactId }: { artifactId: string }) {
   const artifact = useOrbit((s) => s.artifacts.find((a) => a.id === artifactId))
@@ -47,7 +21,7 @@ export function ArtifactCard({ artifactId }: { artifactId: string }) {
   const isOpen = openArtifactId === artifact.id
 
   return (
-    <button
+    <button type="button"
       onClick={() => setOpenArtifact(isOpen ? null : artifact.id)}
       className={cn(
         "group hover:bg-muted/60 my-2 flex w-full max-w-md items-center gap-3 rounded-lg border p-3 text-left transition-colors",

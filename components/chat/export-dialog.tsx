@@ -45,20 +45,24 @@ export function ExportDialog({
   const [includeBranches, setIncludeBranches] = React.useState(false)
   const [state, setState] = React.useState<"idle" | "working" | "done">("idle")
   const [progress, setProgress] = React.useState(0)
-  const [blob, setBlob] = React.useState<Blob | null>(null)
+  const blobRef = React.useRef<Blob | null>(null)
 
   const path = activePath(session)
   const turns = path.length
   const citations = path.reduce((n, m) => n + (m.citations?.length ?? 0), 0)
   const branches = countBranches(session)
 
-  React.useEffect(() => {
+  const [prevOpen, setPrevOpen] = React.useState(open)
+  if (open !== prevOpen) {
+    setPrevOpen(open)
+    // Reset the visible export state when the dialog closes. blobRef isn't
+    // touched here — a ref must not be mutated during render, and its value is
+    // only read while state === "done", then overwritten by the next export.
     if (!open) {
       setState("idle")
       setProgress(0)
-      setBlob(null)
     }
-  }, [open])
+  }
 
   const fileName = `${session.title
     .toLowerCase()
@@ -75,7 +79,7 @@ export function ExportDialog({
         includeThinking,
       })
       setProgress(100)
-      setBlob(generated)
+      blobRef.current = generated
       setState("done")
       pushActivity({
         kind: "export",
@@ -111,7 +115,7 @@ export function ExportDialog({
             </div>
             <Button
               onClick={() => {
-                if (blob) downloadBlob(blob, fileName)
+                if (blobRef.current) downloadBlob(blobRef.current, fileName)
                 toast("Download started", { description: fileName })
                 onOpenChange(false)
               }}

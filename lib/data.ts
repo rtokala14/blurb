@@ -106,8 +106,8 @@ export const seedDocs: Doc[] = [
   },
   {
     id: "d-q3-vendor-spend",
-    name: "Q3 Vendor Spend Analysis.xlsx",
-    type: "xlsx",
+    name: "Q3 Vendor Spend Analysis.pdf",
+    type: "pdf",
     folderId: "f-finance-q3",
     source: "upload",
     status: "ready",
@@ -154,8 +154,8 @@ export const seedDocs: Doc[] = [
   },
   {
     id: "d-q2-board",
-    name: "Q2 Board Deck — Final.pptx",
-    type: "pptx",
+    name: "Q2 Board Deck — Final.pdf",
+    type: "pdf",
     folderId: "f-finance",
     source: "upload",
     status: "ready",
@@ -230,8 +230,8 @@ export const seedDocs: Doc[] = [
   },
   {
     id: "d-comp-bands",
-    name: "Compensation Bands FY26.xlsx",
-    type: "xlsx",
+    name: "Compensation Bands FY26.pdf",
+    type: "pdf",
     folderId: "f-people",
     source: "upload",
     status: "ready",
@@ -260,8 +260,8 @@ export const seedDocs: Doc[] = [
   },
   {
     id: "d-sp-vendor-dir",
-    name: "Approved Vendor Directory.xlsx",
-    type: "xlsx",
+    name: "Approved Vendor Directory.pdf",
+    type: "pdf",
     folderId: "f-sp-ops",
     source: "sharepoint",
     status: "ready",
@@ -290,8 +290,8 @@ export const seedDocs: Doc[] = [
   },
   {
     id: "d-sp-battlecards",
-    name: "Competitor Battlecards — July.pptx",
-    type: "pptx",
+    name: "Competitor Battlecards — July.pdf",
+    type: "pdf",
     folderId: "f-sp-sales",
     source: "sharepoint",
     status: "ready",
@@ -410,7 +410,7 @@ export const seedArtifacts: Artifact[] = [
   },
   {
     id: "a-vendor-model",
-    kind: "sheet",
+    kind: "doc",
     title: "Vendor Renewal Model FY27",
     status: "ready",
     createdAt: "2026-07-05T11:00:00Z",
@@ -420,13 +420,13 @@ export const seedArtifacts: Artifact[] = [
   },
   {
     id: "a-qbr-deck",
-    kind: "deck",
+    kind: "doc",
     title: "Q3 Business Review — Draft",
     status: "ready",
     createdAt: "2026-07-03T13:45:00Z",
     updatedAt: "2026-07-04T10:05:00Z",
     sourceDocIds: ["d-q3-forecast", "d-q2-board", "d-usage-metrics"],
-    lastEditSummary: "Rebuilt the spend-trend slide from the June usage export.",
+    lastEditSummary: "Rebuilt the spend-trend section from the June usage export.",
   },
 ]
 
@@ -727,7 +727,7 @@ export const seedSessions: ChatSession[] = [
   },
   {
     id: "s-qbr",
-    title: "Q3 business review deck",
+    title: "Q3 business review draft",
     createdAt: "2026-07-03T13:30:00Z",
     updatedAt: "2026-07-04T10:05:00Z",
     scopeDocIds: ["d-q3-forecast", "d-q2-board", "d-usage-metrics"],
@@ -738,7 +738,7 @@ export const seedSessions: ChatSession[] = [
         parentId: null,
         role: "user",
         content:
-          "Build a first-draft QBR deck from the Q3 forecast narrative, reusing the Q2 board deck structure.",
+          "Draft a first-cut Q3 business review from the Q3 forecast narrative, reusing the Q2 board document structure.",
         createdAt: "2026-07-03T13:30:15Z",
         phase: "done",
         scopeLabel: "3 documents in scope",
@@ -750,25 +750,25 @@ export const seedSessions: ChatSession[] = [
         createdAt: "2026-07-03T13:45:50Z",
         phase: "done",
         content:
-          "Draft deck is ready — 12 slides following the Q2 structure: summary, financials, product, GTM, risks, asks. The spend-trend slide is generated from the June usage export, and speaker notes carry source references for every figure. Open it in the Studio to review slide-by-slide.",
+          "Draft document is ready — following the Q2 structure: summary, financials, product, GTM, risks, asks. The spend-trend section is generated from the June usage export, and every figure carries a source citation. Open it in the Studio to review section-by-section.",
         thinking: [
           {
             id: "t1",
             kind: "read",
-            label: "Extracting Q2 deck structure",
+            label: "Extracting Q2 document structure",
             docIds: ["d-q2-board"],
           },
           {
             id: "t2",
             kind: "analyze",
-            label: "Summarizing forecast narrative into slide bullets",
+            label: "Summarizing forecast narrative into section points",
             docIds: ["d-q3-forecast"],
           },
           {
             id: "t3",
             kind: "tool",
-            label: "Creating presentation “Q3 Business Review — Draft”",
-            detail: "12 slides, 4 charts, speaker notes with citations",
+            label: "Creating document “Q3 Business Review — Draft”",
+            detail: "6 sections, 4 tables, citations on every figure",
           },
         ],
         artifactIds: ["a-qbr-deck"],

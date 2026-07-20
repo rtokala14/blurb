@@ -15,6 +15,12 @@ import {
   syncDeleteSession,
   syncSessionScope,
 } from "@/lib/live-sync"
+import {
+  DEFAULT_USER_PROFILE,
+  persistUserProfile,
+  readUserProfile,
+  type UserProfile,
+} from "@/lib/user-profile"
 import type {
   ActivityItem,
   Artifact,
@@ -31,35 +37,6 @@ let idCounter = 0
 export function uid(prefix: string) {
   idCounter += 1
   return `${prefix}-${idCounter}-${Math.random().toString(36).slice(2, 7)}`
-}
-
-/* Persona choice persistence (v1 — no ontology column yet). Keyed by
- * session rid in localStorage so the attachment survives a reload. */
-const PERSONA_STORE_KEY = "orbit.session-personas"
-
-function readSessionPersonas(): Record<string, string> {
-  if (typeof window === "undefined") return {}
-  try {
-    return JSON.parse(window.localStorage.getItem(PERSONA_STORE_KEY) || "{}")
-  } catch {
-    return {}
-  }
-}
-
-export function persistSessionPersona(id: string, personaId: string | null) {
-  if (typeof window === "undefined") return
-  const map = readSessionPersonas()
-  if (personaId) map[id] = personaId
-  else delete map[id]
-  try {
-    window.localStorage.setItem(PERSONA_STORE_KEY, JSON.stringify(map))
-  } catch {
-    /* storage full/blocked — persona still lives in the in-memory session */
-  }
-}
-
-export function sessionPersonaFor(id: string): string | null {
-  return readSessionPersonas()[id] ?? null
 }
 
 interface OrbitState {
@@ -124,6 +101,8 @@ interface OrbitState {
   addFolder: (folder: DocFolder) => void
   renameFolder: (id: string, name: string) => void
   patchFolder: (id: string, patch: Partial<DocFolder>) => void
+  /** delete a folder and all its descendants; contained docs are unfiled */
+  removeFolder: (id: string) => void
 
   /* sharepoint */
   updateSite: (id: string, patch: Partial<SharePointSite>) => void
@@ -138,7 +117,6 @@ interface OrbitState {
   deleteSession: (id: string) => void
   togglePinSession: (id: string) => void
   setSessionScope: (id: string, docIds: string[]) => void
-  setSessionPersona: (id: string, personaId: string | null) => void
   addMessage: (sessionId: string, message: ChatMessage, setAsLeaf?: boolean) => void
   updateMessage: (
     sessionId: string,
@@ -154,6 +132,13 @@ interface OrbitState {
   /** live mode: replace a session's derived artifacts after a transcript load */
   setSessionArtifacts: (sessionId: string, artifacts: Artifact[]) => void
   setOpenArtifact: (id: string | null) => void
+
+  /* user profile & preferences (localStorage-backed, per-user) */
+  userProfile: UserProfile
+  /** merge a patch into the profile and persist it */
+  setUserProfile: (patch: Partial<UserProfile>) => void
+  /** load the profile from localStorage (client mount) */
+  hydrateUserProfile: () => void
 }
 
 export const useOrbit = create<OrbitState>((set) => ({
@@ -280,6 +265,28 @@ export const useOrbit = create<OrbitState>((set) => ({
     set((s) => ({
       folders: s.folders.map((f) => (f.id === id ? { ...f, ...patch } : f)),
     })),
+  removeFolder: (id) =>
+    set((s) => {
+      // collect the folder and every descendant so nested folders go too
+      const doomed = new Set<string>([id])
+      let changed = true
+      while (changed) {
+        changed = false
+        for (const f of s.folders) {
+          if (f.parentId && doomed.has(f.parentId) && !doomed.has(f.id)) {
+            doomed.add(f.id)
+            changed = true
+          }
+        }
+      }
+      return {
+        folders: s.folders.filter((f) => !doomed.has(f.id)),
+        // documents in any removed folder fall back to the library root
+        docs: s.docs.map((d) =>
+          d.folderId && doomed.has(d.folderId) ? { ...d, folderId: null } : d
+        ),
+      }
+    }),
 
   updateSite: (id, patch) =>
     set((s) => ({
@@ -343,17 +350,6 @@ export const useOrbit = create<OrbitState>((set) => ({
       ),
     }))
     syncSessionScope(id, docIds)
-  },
-  setSessionPersona: (id, personaId) => {
-    set((s) => ({
-      sessions: s.sessions.map((x) =>
-        x.id === id ? { ...x, personaId } : x
-      ),
-    }))
-    // v1: no ontology column for the persona choice, so persist client-side
-    // (keyed by session rid) and echo it on each turn. Tier 2 moves this to
-    // OrbitDocsUserSessions so it survives a server-side transcript replay.
-    persistSessionPersona(id, personaId)
   },
   addMessage: (sessionId, message, setAsLeaf = true) =>
     set((s) => ({
@@ -422,6 +418,15 @@ export const useOrbit = create<OrbitState>((set) => ({
       return { artifacts: next, openArtifactId }
     }),
   setOpenArtifact: (id) => set({ openArtifactId: id }),
+
+  userProfile: DEFAULT_USER_PROFILE,
+  setUserProfile: (patch) =>
+    set((s) => {
+      const userProfile = { ...s.userProfile, ...patch }
+      persistUserProfile(userProfile)
+      return { userProfile }
+    }),
+  hydrateUserProfile: () => set({ userProfile: readUserProfile() }),
 }))
 
 /* ------------------------------------------------------------------ */

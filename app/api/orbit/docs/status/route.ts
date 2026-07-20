@@ -18,7 +18,10 @@ export async function POST(request: Request) {
     const body = (await request.json().catch(() => ({}))) as {
       primaryKeys?: string[]
     }
-    const primaryKeys = (body.primaryKeys ?? []).map(String).filter(Boolean)
+    const primaryKeys = (body.primaryKeys ?? []).flatMap((k) => {
+      const key = String(k)
+      return key ? [key] : []
+    })
     if (primaryKeys.length === 0) return json({ data: [], count: 0 })
 
     const user = normalizeEmail(await resolveRequestUser(request))
@@ -34,15 +37,15 @@ export async function POST(request: Request) {
 
     // PoC visibility rules: only active docs the user owns or can reach
     // through an accessible folder get a status update.
-    const data = primaryKeys
-      .map((key) => {
-        const doc = docs.get(key)
-        if (!doc || doc.isActive === false) return null
-        if (normalizeEmail(doc.addedBy) !== user && !folderDocIds.has(key)) {
-          return null
-        }
-        const status = statusMap.get(key)
-        return {
+    const data = primaryKeys.flatMap((key) => {
+      const doc = docs.get(key)
+      if (!doc || doc.isActive === false) return []
+      if (normalizeEmail(doc.addedBy) !== user && !folderDocIds.has(key)) {
+        return []
+      }
+      const status = statusMap.get(key)
+      return [
+        {
           primaryKey: key,
           isIndexed: status?.isIndexingComplete ?? Boolean(doc.isIndexed),
           noPages: doc.noPages ?? status?.noPages ?? null,
@@ -54,9 +57,9 @@ export async function POST(request: Request) {
                 noPages: status.noPages ?? null,
               }
             : null,
-        }
-      })
-      .filter(Boolean)
+        },
+      ]
+    })
     return json({ data, count: data.length })
   } catch (error) {
     return errorResponse(error)

@@ -45,15 +45,13 @@ interface PendingFile {
 
 const sampleFiles: Array<Pick<PendingFile, "name" | "type" | "sizeKB">> = [
   { name: "Initech Services Agreement (draft).pdf", type: "pdf", sizeKB: 1840 },
-  { name: "FY27 Headcount Plan.xlsx", type: "xlsx", sizeKB: 388 },
+  { name: "FY27 Headcount Plan.pdf", type: "pdf", sizeKB: 388 },
   { name: "Partner Launch Brief.docx", type: "docx", sizeKB: 152 },
 ]
 
 function typeFromName(name: string): DocType {
   const ext = name.split(".").pop()?.toLowerCase()
   if (ext === "pdf") return "pdf"
-  if (ext === "xlsx" || ext === "xls") return "xlsx"
-  if (ext === "pptx" || ext === "ppt") return "pptx"
   if (ext === "csv") return "csv"
   if (ext === "md") return "md"
   return "docx"
@@ -198,9 +196,9 @@ export function UploadDialog({
   /** Live upload: POST real files to Foundry, refresh, then poll indexing. */
   const startLive = async () => {
     setRunning(true)
-    const realFiles = files
-      .filter((f) => f.file)
-      .map((f) => ({ file: f.file!, name: f.name }))
+    const realFiles = files.flatMap((f) =>
+      f.file ? [{ file: f.file, name: f.name }] : []
+    )
     if (realFiles.length === 0) {
       setRunning(false)
       toast.error("No files to upload")
@@ -227,9 +225,9 @@ export function UploadDialog({
         }),
       }))
 
-      const batchIds = mapped
-        .filter((d) => realFiles.some((rf) => rf.name === d.name))
-        .map((d) => d.id)
+      const batchIds = mapped.flatMap((d) =>
+        realFiles.some((rf) => rf.name === d.name) ? [d.id] : []
+      )
       batchRef.current = {
         ids: batchIds,
         email: notifyEmail.trim(),
@@ -395,7 +393,7 @@ export function UploadDialog({
                 Drop files here or click to browse
               </p>
               <p className="text-muted-foreground text-xs">
-                PDF, Word, Excel, PowerPoint, CSV, Markdown · up to 200 MB
+                PDF, Word, CSV, Markdown · up to 200 MB
               </p>
               <input
                 ref={inputRef}
@@ -476,14 +474,16 @@ export function UploadDialog({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {folders
-                .filter((f) => f.source === "upload")
-                .map((f) => (
-                  <SelectItem key={f.id} value={f.id}>
-                    {f.parentId ? "· " : ""}
-                    {f.name}
-                  </SelectItem>
-                ))}
+              {folders.flatMap((f) =>
+                f.source === "upload"
+                  ? [
+                      <SelectItem key={f.id} value={f.id}>
+                        {f.parentId ? "· " : ""}
+                        {f.name}
+                      </SelectItem>,
+                    ]
+                  : []
+              )}
             </SelectContent>
           </Select>
         </div>

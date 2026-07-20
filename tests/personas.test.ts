@@ -11,10 +11,10 @@ import {
 } from "@/lib/personas"
 
 describe("built-in personas are well-formed", () => {
-  test("there are seven, spanning distinct domains", () => {
-    expect(BUILTIN_PERSONAS).toHaveLength(7)
+  test("there are two, spanning distinct domains", () => {
+    expect(BUILTIN_PERSONAS).toHaveLength(2)
     const domains = new Set(BUILTIN_PERSONAS.map((p) => p.domain))
-    expect(domains.size).toBe(7)
+    expect(domains.size).toBe(2)
   })
 
   test("ids and names are unique", () => {
@@ -63,7 +63,7 @@ describe("buildPersonaPreamble", () => {
   })
 
   test("includes the anti-patterns (the guardrails)", () => {
-    const persona = getBuiltinPersona("contracts-claims")!
+    const persona = getBuiltinPersona("contract-administrator")!
     const preamble = buildPersonaPreamble(persona)
     expect(preamble).toContain("Avoid these anti-patterns")
     expect(preamble).toContain(persona.antiPatterns[0])
@@ -82,7 +82,7 @@ describe("buildPersonaPreamble", () => {
 
 describe("registry lookup", () => {
   test("resolves known ids and rejects unknown", () => {
-    expect(getBuiltinPersona("qaqc-inspection")?.domain).toBe("quality")
+    expect(getBuiltinPersona("technical-director")?.domain).toBe("technical")
     expect(getBuiltinPersona("does-not-exist")).toBeNull()
     expect(getBuiltinPersona(null)).toBeNull()
   })
@@ -90,6 +90,6 @@ describe("registry lookup", () => {
   test("personaPreambleForId is empty for no/invalid persona", () => {
     expect(personaPreambleForId(null)).toBe("")
     expect(personaPreambleForId("nope")).toBe("")
-    expect(personaPreambleForId("hse-advisor")).toContain("<persona>")
+    expect(personaPreambleForId("technical-director")).toContain("<persona>")
   })
 })

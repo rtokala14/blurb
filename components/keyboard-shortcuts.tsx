@@ -12,24 +12,14 @@ import {
 } from "@/components/ui/dialog"
 import { Kbd, KbdGroup } from "@/components/ui/kbd"
 import { useOrbit } from "@/lib/store"
+import { isEditableTarget } from "@/components/keyboard-shortcuts-utils"
 
 /** Anywhere in the app can request the shortcuts dialog via this event. */
 export const SHORTCUTS_EVENT = "orbit:show-shortcuts"
 
-export function isEditableTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false
-  return (
-    target.isContentEditable ||
-    target.tagName === "INPUT" ||
-    target.tagName === "TEXTAREA" ||
-    target.tagName === "SELECT"
-  )
-}
-
 const nav: [string, string][] = [
   ["/chat", "Chat"],
   ["/documents", "Documents"],
-  ["/studio", "Studio"],
   ["/connections", "Connections"],
 ]
 
@@ -44,7 +34,7 @@ const groups: { title: string; rows: ShortcutRow[] }[] = [
     rows: [
       { keys: ["Ctrl", "K"], label: "Command palette" },
       { keys: ["Ctrl", "B"], label: "Toggle navigation sidebar" },
-      { keys: ["Ctrl", "1"], label: "Go to Chat (…Ctrl 4 for Connections)" },
+      { keys: ["Ctrl", "1"], label: "Go to Chat (…Ctrl 3 for Connections)" },
       { keys: ["Ctrl", "Shift", "O"], label: "New chat session" },
       { keys: ["Ctrl", "Shift", "U"], label: "Upload documents" },
       { keys: ["?"], label: "Show this dialog" },
@@ -55,7 +45,7 @@ const groups: { title: string; rows: ShortcutRow[] }[] = [
     rows: [
       { keys: ["↵"], label: "Send message" },
       { keys: ["⇧", "↵"], label: "New line" },
-      { keys: ["/"], label: "Creation commands (/doc, /sheet, /deck)" },
+      { keys: ["/"], label: "Creation command (/doc)" },
       { keys: ["Esc"], label: "Stop generating" },
       { keys: ["Ctrl", "."], label: "Toggle documents panel" },
       { keys: ["Ctrl", "Shift", "E"], label: "Export session" },
@@ -85,7 +75,7 @@ export function KeyboardShortcuts() {
       const mod = e.metaKey || e.ctrlKey
 
       /* ⌘1–⌘4 — page navigation */
-      if (mod && !e.shiftKey && !e.altKey && /^[1-4]$/.test(e.key)) {
+      if (mod && !e.shiftKey && !e.altKey && /^[1-3]$/.test(e.key)) {
         e.preventDefault()
         router.push(nav[Number(e.key) - 1][0])
         return

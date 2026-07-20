@@ -17,7 +17,6 @@ import {
   Pencil,
   PenSquare,
   Pin,
-  Sparkles,
   Trash2,
 } from "lucide-react"
 
@@ -67,7 +66,6 @@ import type { ChatFolder, ChatSession } from "@/lib/types"
 const nav = [
   { title: "Chat", href: "/chat", icon: MessageSquareText },
   { title: "Documents", href: "/documents", icon: FolderOpen },
-  { title: "Studio", href: "/studio", icon: Sparkles },
   { title: "Connections", href: "/connections", icon: Cable },
 ]
 
@@ -76,65 +74,36 @@ const byRecency = (a: ChatSession, b: ChatSession) => {
   return b.updatedAt.localeCompare(a.updatedAt)
 }
 
-export function AppSidebar() {
-  const pathname = usePathname()
-  const sessions = useOrbit((s) => s.sessions)
-  const isAdmin = useOrbit((s) => s.liveIsAdmin)
-  const chatFolders = useOrbit((s) => s.chatFolders)
-  const live = useOrbit((s) => s.live === true)
-  const activeSessionId = useOrbit((s) => s.activeSessionId)
-  const setActiveSession = useOrbit((s) => s.setActiveSession)
-  const createSession = useOrbit((s) => s.createSession)
-  const togglePinSession = useOrbit((s) => s.togglePinSession)
-  const deleteSession = useOrbit((s) => s.deleteSession)
+type FolderDialogState = {
+  open: boolean
+  folder: ChatFolder | null
+  /** file this session into the folder once created */
+  moveSessionId?: string
+}
 
-  const [folderDialog, setFolderDialog] = React.useState<{
-    open: boolean
-    folder: ChatFolder | null
-    /** file this session into the folder once created */
-    moveSessionId?: string
-  }>({ open: false, folder: null })
-  const [deleteDialog, setDeleteDialog] = React.useState<{
-    open: boolean
-    folder: ChatFolder | null
-  }>({ open: false, folder: null })
-
-  // Recompute the recency-sorted lists only when sessions/folders change, not
-  // on the sidebar's own local state (dialogs, hover) — and not repeatedly for
-  // the same store update.
-  const unfiled = React.useMemo(
-    () =>
-      sessions
-        .filter(
-          (s) => !s.chatFolderId || !chatFolders.some((f) => f.id === s.chatFolderId)
-        )
-        .sort(byRecency)
-        .slice(0, 6),
-    [sessions, chatFolders]
-  )
-
-  const sessionsByFolder = React.useMemo(() => {
-    const map = new Map<string, ChatSession[]>()
-    for (const folder of chatFolders) {
-      map.set(
-        folder.id,
-        sessions.filter((s) => s.chatFolderId === folder.id).sort(byRecency)
-      )
-    }
-    return map
-  }, [sessions, chatFolders])
-
-  const isActive = (session: ChatSession) =>
-    pathname.startsWith("/chat") && session.id === activeSessionId
-
-  /** One session row — used both inside folders and in the recent list. */
-  const SessionItem = ({
-    session,
-    inFolder = false,
-  }: {
-    session: ChatSession
-    inFolder?: boolean
-  }) => (
+/** One session row — used both inside folders and in the recent list. */
+function SessionItem({
+  session,
+  inFolder = false,
+  isActive,
+  setActiveSession,
+  togglePinSession,
+  deleteSession,
+  live,
+  chatFolders,
+  setFolderDialog,
+}: {
+  session: ChatSession
+  inFolder?: boolean
+  isActive: (session: ChatSession) => boolean
+  setActiveSession: (id: string) => void
+  togglePinSession: (id: string) => void
+  deleteSession: (id: string) => void
+  live: boolean
+  chatFolders: ChatFolder[]
+  setFolderDialog: React.Dispatch<React.SetStateAction<FolderDialogState>>
+}) {
+  return (
     <SidebarMenuItem>
       <SidebarMenuButton
         asChild
@@ -225,6 +194,56 @@ export function AppSidebar() {
       </DropdownMenu>
     </SidebarMenuItem>
   )
+}
+
+export function AppSidebar() {
+  const pathname = usePathname()
+  const sessions = useOrbit((s) => s.sessions)
+  const isAdmin = useOrbit((s) => s.liveIsAdmin)
+  const chatFolders = useOrbit((s) => s.chatFolders)
+  const live = useOrbit((s) => s.live === true)
+  const activeSessionId = useOrbit((s) => s.activeSessionId)
+  const setActiveSession = useOrbit((s) => s.setActiveSession)
+  const createSession = useOrbit((s) => s.createSession)
+  const togglePinSession = useOrbit((s) => s.togglePinSession)
+  const deleteSession = useOrbit((s) => s.deleteSession)
+
+  const [folderDialog, setFolderDialog] = React.useState<FolderDialogState>({
+    open: false,
+    folder: null,
+  })
+  const [deleteDialog, setDeleteDialog] = React.useState<{
+    open: boolean
+    folder: ChatFolder | null
+  }>({ open: false, folder: null })
+
+  // Recompute the recency-sorted lists only when sessions/folders change, not
+  // on the sidebar's own local state (dialogs, hover) — and not repeatedly for
+  // the same store update.
+  const unfiled = React.useMemo(
+    () =>
+      sessions
+        .filter(
+          (s) => !s.chatFolderId || !chatFolders.some((f) => f.id === s.chatFolderId)
+        )
+        .sort(byRecency)
+        .slice(0, 6),
+    [sessions, chatFolders]
+  )
+
+  const sessionsByFolder = React.useMemo(() => {
+    const map = new Map<string, ChatSession[]>()
+    for (const folder of chatFolders) {
+      map.set(
+        folder.id,
+        sessions.filter((s) => s.chatFolderId === folder.id).sort(byRecency)
+      )
+    }
+    return map
+  }, [sessions, chatFolders])
+
+  const isActive = (session: ChatSession) =>
+    pathname.startsWith("/chat") && session.id === activeSessionId
 
   return (
     <Sidebar collapsible="icon">
@@ -381,6 +400,13 @@ export function AppSidebar() {
                                 key={session.id}
                                 session={session}
                                 inFolder
+                                isActive={isActive}
+                                setActiveSession={setActiveSession}
+                                togglePinSession={togglePinSession}
+                                deleteSession={deleteSession}
+                                live={live}
+                                chatFolders={chatFolders}
+                                setFolderDialog={setFolderDialog}
                               />
                             ))
                           )}
@@ -391,7 +417,17 @@ export function AppSidebar() {
                 )
               })}
               {unfiled.map((session) => (
-                <SessionItem key={session.id} session={session} />
+                <SessionItem
+                  key={session.id}
+                  session={session}
+                  isActive={isActive}
+                  setActiveSession={setActiveSession}
+                  togglePinSession={togglePinSession}
+                  deleteSession={deleteSession}
+                  live={live}
+                  chatFolders={chatFolders}
+                  setFolderDialog={setFolderDialog}
+                />
               ))}
             </SidebarMenu>
           </SidebarGroupContent>
@@ -416,8 +452,12 @@ export function AppSidebar() {
                 </SidebarMenuButton>
               </DropdownMenuTrigger>
               <DropdownMenuContent side="top" align="start" className="w-56">
-                <DropdownMenuItem>Profile</DropdownMenuItem>
-                <DropdownMenuItem>Workspace settings</DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link href="/settings">Profile & preferences</Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link href="/settings">Workspace settings</Link>
+                </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem>Sign out</DropdownMenuItem>
               </DropdownMenuContent>

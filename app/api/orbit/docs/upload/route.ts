@@ -93,30 +93,34 @@ export async function POST(request: Request) {
 
     const uploaded: { documentName: string; noPages: number }[] = []
     try {
-    for (const [i, file] of files.entries()) {
-      const documentName = (names[i] || file.name).trim()
-      const bytes = await file.arrayBuffer()
-      const pdf = await PDFDocument.load(bytes, {
-        ignoreEncryption: true,
-        updateMetadata: false,
-      })
-      const noPages = pdf.getPageCount()
+    // Each file is processed independently (read → parse → upload → row), so
+    // fan the batch out concurrently rather than one file at a time.
+    await Promise.all(
+      files.map(async (file, i) => {
+        const documentName = (names[i] || file.name).trim()
+        const bytes = await file.arrayBuffer()
+        const pdf = await PDFDocument.load(bytes, {
+          ignoreEncryption: true,
+          updateMetadata: false,
+        })
+        const noPages = pdf.getPageCount()
 
-      const safeStem = documentName
-        .replace(/\.pdf$/i, "")
-        .replace(/[^a-zA-Z0-9-_]+/g, "-")
-        .slice(0, 60)
-      const mediaItemPath = `uploads/${crypto.randomUUID().slice(0, 12)}_${safeStem}.pdf`
-      const reference = await uploadMedia(bytes, mediaItemPath)
+        const safeStem = documentName
+          .replace(/\.pdf$/i, "")
+          .replace(/[^a-zA-Z0-9-_]+/g, "-")
+          .slice(0, 60)
+        const mediaItemPath = `uploads/${crypto.randomUUID().slice(0, 12)}_${safeStem}.pdf`
+        const reference = await uploadMedia(bytes, mediaItemPath)
 
-      await createDocRow({
-        documentName,
-        reference,
-        noPages,
-        addedBy: userEmail,
+        await createDocRow({
+          documentName,
+          reference,
+          noPages,
+          addedBy: userEmail,
+        })
+        uploaded.push({ documentName, noPages })
       })
-      uploaded.push({ documentName, noPages })
-    }
+    )
     } finally {
       // record whatever made it up, even on partial failure
       await commitUploadUsage(userEmail, uploaded.length, reservationId).catch(

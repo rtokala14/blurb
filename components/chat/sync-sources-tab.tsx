@@ -241,20 +241,23 @@ function SourceExplorer({
 
   /* lazily load descendant doc pks for visible folders (tri-state boxes) */
   React.useEffect(() => {
-    const missing = entries
-      .filter((e) => e.isFolder && !(e.path in folderDocs))
-      .map((e) => e.path)
+    const missing = entries.flatMap((e) =>
+      e.isFolder && !(e.path in folderDocs) ? [e.path] : []
+    )
     if (missing.length === 0) return
     let cancelled = false
     void (async () => {
-      const loaded: Record<string, string[]> = {}
-      for (const p of missing) {
-        try {
-          loaded[p] = (await liveApi.syncFolderDocs(site.id, p)).docPks
-        } catch {
-          loaded[p] = []
-        }
-      }
+      // Each folder's docs load independently — fetch them all at once.
+      const entries = await Promise.all(
+        missing.map(async (p) => {
+          try {
+            return [p, (await liveApi.syncFolderDocs(site.id, p)).docPks] as const
+          } catch {
+            return [p, [] as string[]] as const
+          }
+        })
+      )
+      const loaded: Record<string, string[]> = Object.fromEntries(entries)
       if (!cancelled) setFolderDocs((prev) => ({ ...prev, ...loaded }))
     })()
     return () => {

@@ -20,14 +20,18 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 
-import { DocIcon, docTypeLabel } from "@/components/doc-icon"
+import { DocIcon } from "@/components/doc-icon"
+import { docTypeLabel } from "@/components/doc-icon-config"
 import { DocPreviewSheet } from "@/components/documents/doc-preview-sheet"
+import {
+  DeleteDocFolderDialog,
+  DocFolderDialog,
+} from "@/components/documents/folder-dialogs"
 import { ShareDialog } from "@/components/share-dialog"
 import { adoptSearchResult, useLiveDocSearch } from "@/hooks/use-live-doc-search"
-import { loadMoreLiveDocs } from "@/components/live-provider"
-import { liveApi } from "@/lib/live-api"
+import { loadMoreLiveDocs } from "@/components/live-hydrate"
 import { Checkbox } from "@/components/ui/checkbox"
-import { FolderTree } from "@/components/documents/folder-tree"
+import { FolderTree, type FolderActions } from "@/components/documents/folder-tree"
 import { UploadDialog } from "@/components/documents/upload-dialog"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -50,14 +54,6 @@ import {
   ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -89,9 +85,9 @@ import {
 } from "@/components/ui/toggle-group"
 import { formatSize } from "@/lib/format"
 import { TimeAgo } from "@/components/time-ago"
-import { uid, useOrbit } from "@/lib/store"
+import { useOrbit } from "@/lib/store"
 import { useSharePointSync } from "@/lib/use-sharepoint-sync"
-import type { Doc } from "@/lib/types"
+import type { Doc, DocFolder } from "@/lib/types"
 
 type SortKey = "updated" | "name" | "size"
 
@@ -120,7 +116,6 @@ export function DocumentsView() {
   const sites = useOrbit((s) => s.sites)
   const updateDoc = useOrbit((s) => s.updateDoc)
   const removeDoc = useOrbit((s) => s.removeDoc)
-  const addFolder = useOrbit((s) => s.addFolder)
   const createSession = useOrbit((s) => s.createSession)
   const syncSite = useSharePointSync()
 
@@ -130,16 +125,32 @@ export function DocumentsView() {
   const [view, setView] = React.useState<"list" | "grid">("list")
   const [uploadOpen, setUploadOpen] = React.useState(false)
   const [previewDocId, setPreviewDocId] = React.useState<string | null>(null)
-  const [newFolderOpen, setNewFolderOpen] = React.useState(false)
-  const [newFolderName, setNewFolderName] = React.useState("")
+  const [folderDialog, setFolderDialog] = React.useState<{
+    open: boolean
+    folder: DocFolder | null
+    parentId: string | null
+  }>({ open: false, folder: null, parentId: null })
+  const [deleteFolder, setDeleteFolder] = React.useState<DocFolder | null>(null)
+  const [shareFolder, setShareFolder] = React.useState<DocFolder | null>(null)
   const [treeSheetOpen, setTreeSheetOpen] = React.useState(false)
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set())
   const [docWindow, setDocWindow] = React.useState(200)
   const [loadingMore, setLoadingMore] = React.useState(false)
-  const [shareOpen, setShareOpen] = React.useState(false)
   const live = useOrbit((s) => s.live === true)
   const liveUserEmail = useOrbit((s) => (s.liveUserEmail ?? "").toLowerCase())
   const patchFolder = useOrbit((s) => s.patchFolder)
+
+  const folderActions: FolderActions = React.useMemo(
+    () => ({
+      onNewSubfolder: (parentId) =>
+        setFolderDialog({ open: true, folder: null, parentId }),
+      onEdit: (folder) =>
+        setFolderDialog({ open: true, folder, parentId: folder.parentId }),
+      onShare: (folder) => setShareFolder(folder),
+      onDelete: (folder) => setDeleteFolder(folder),
+    }),
+    []
+  )
 
   const toggleSelected = (id: string) =>
     setSelectedIds((prev) => {
@@ -156,24 +167,12 @@ export function DocumentsView() {
     toast(`Deleted ${ids.length} ${ids.length === 1 ? "document" : "documents"}`)
   }
 
-  const bulkAddToFolder = async (folderId: string) => {
+  const bulkAddToFolder = (folderId: string) => {
     const ids = [...selectedIds]
-    try {
-      // merge into the folder's current contents (fetched fresh — the store
-      // doesn't hold contents arrays)
-      const { data } = await liveApi.folders()
-      const target = data.find((f) => f.primaryKey === folderId)
-      if (!target) throw new Error("Folder not found")
-      const merged = [...new Set([...target.contents, ...ids])]
-      await liveApi.updateFolder(folderId, { contents: merged })
-      ids.forEach((id) => updateDoc(id, { folderId }))
-      setSelectedIds(new Set())
-      toast(`Added ${ids.length} ${ids.length === 1 ? "document" : "documents"} to the folder`)
-    } catch (error) {
-      toast.error("Couldn't add to the folder", {
-        description: error instanceof Error ? error.message : undefined,
-      })
-    }
+    ids.forEach((id) => updateDoc(id, { folderId }))
+    setSelectedIds(new Set())
+    const name = folders.find((f) => f.id === folderId)?.name ?? "folder"
+    toast(`Added ${ids.length} ${ids.length === 1 ? "document" : "documents"} to ${name}`)
   }
 
   const loadMore = async () => {
@@ -211,89 +210,26 @@ export function DocumentsView() {
   const currentFolder = folders.find((f) => f.id === currentFolderId)
   const site = sites.find((s) => s.mappedFolderId === currentFolderId)
 
-  /** Create a folder — real OrbitFolders row in live mode, local in demo. */
-  const createNewFolder = async () => {
-    const name = newFolderName.trim()
-    if (!name) return
-    if (live) {
-      try {
-        const created = await liveApi.createFolder({ name })
-        addFolder({
-          id: created.primaryKey,
-          name: created.name,
-          parentId: null,
-          source: "upload",
-          createdBy: created.createdBy,
-          accessEmails: created.accessEmails,
-        })
-        toast.success("Folder created", { description: name })
-      } catch (error) {
-        toast.error("Couldn't create the folder", {
-          description: error instanceof Error ? error.message : undefined,
-        })
-        return
-      }
-    } else {
-      addFolder({
-        id: uid("f"),
-        name,
-        parentId: currentFolder?.source === "upload" ? currentFolder.id : null,
-        source: "upload",
-      })
-      toast.success("Folder created")
-    }
-    setNewFolderName("")
-    setNewFolderOpen(false)
-  }
-
-  /** Move a doc between folders (null = out of any folder), persisted live. */
-  const moveDocToFolder = async (doc: Doc, folderId: string | null) => {
-    if (!live) {
-      updateDoc(doc.id, { folderId })
-      toast(folderId ? "Moved" : "Removed from folder", { description: doc.name })
-      return
-    }
-    try {
-      const { data } = await liveApi.folders()
-      const containing = data.filter((f) => f.contents.includes(doc.id))
-      for (const f of containing.filter((f) => f.primaryKey !== folderId)) {
-        await liveApi.updateFolder(f.primaryKey, {
-          contents: f.contents.filter((id) => id !== doc.id),
-        })
-      }
-      if (folderId && !containing.some((f) => f.primaryKey === folderId)) {
-        const target = data.find((f) => f.primaryKey === folderId)
-        if (!target) throw new Error("Folder not found")
-        await liveApi.updateFolder(folderId, {
-          contents: [...new Set([...target.contents, doc.id])],
-        })
-      }
-      updateDoc(doc.id, { folderId })
-      toast(
-        folderId
-          ? `Moved to ${folders.find((f) => f.id === folderId)?.name ?? "folder"}`
-          : "Removed from folder",
-        { description: doc.name }
-      )
-    } catch (error) {
-      toast.error("Couldn't move the document", {
-        description: error instanceof Error ? error.message : undefined,
-      })
-    }
+  /** Move a doc between folders (null = out of any folder). Local-only. */
+  const moveDocToFolder = (doc: Doc, folderId: string | null) => {
+    updateDoc(doc.id, { folderId })
+    toast(
+      folderId
+        ? `Moved to ${folders.find((f) => f.id === folderId)?.name ?? "folder"}`
+        : "Removed from folder",
+      { description: doc.name }
+    )
   }
 
   const canShareCurrentFolder =
-    live &&
-    currentFolder &&
-    currentFolder.source === "upload" &&
-    (currentFolder.createdBy ?? "").toLowerCase() === liveUserEmail
+    currentFolder && currentFolder.source === "upload"
 
   const saveFolderShare = async (emails: string[]) => {
-    if (!currentFolder) return
-    const creator = (currentFolder.createdBy ?? liveUserEmail).toLowerCase()
-    const accessEmails = [creator, ...emails.filter((e) => e !== creator)]
-    await liveApi.updateFolder(currentFolder.id, { accessEmails })
-    patchFolder(currentFolder.id, { accessEmails })
+    const target = shareFolder
+    if (!target) return
+    const creator = (target.createdBy ?? liveUserEmail).toLowerCase()
+    const accessEmails = [creator, ...emails.filter((e) => e.toLowerCase() !== creator)]
+    patchFolder(target.id, { accessEmails })
     toast.success("Folder sharing updated", {
       description:
         emails.length === 0
@@ -332,13 +268,11 @@ export function DocumentsView() {
     const q = query.toLowerCase()
     return docs
       .filter(
-        (d) => !descendantIds || (d.folderId && descendantIds.has(d.folderId))
-      )
-      .filter(
         (d) =>
-          !query ||
-          d.name.toLowerCase().includes(q) ||
-          d.tags.some((t) => t.includes(q))
+          (!descendantIds || (d.folderId && descendantIds.has(d.folderId))) &&
+          (!query ||
+            d.name.toLowerCase().includes(q) ||
+            d.tags.some((t) => t.includes(q)))
       )
       .concat(query && !currentFolderId ? serverHits : [])
       .sort((a, b) => {
@@ -404,16 +338,18 @@ export function DocumentsView() {
                 Library (no folder)
               </ContextMenuItem>
             )}
-            {folders
-              .filter((f) => f.source === "upload" && f.id !== doc.folderId)
-              .map((f) => (
-                <ContextMenuItem
-                  key={f.id}
-                  onClick={() => void moveDocToFolder(doc, f.id)}
-                >
-                  {f.name}
-                </ContextMenuItem>
-              ))}
+            {folders.flatMap((f) =>
+              f.source === "upload" && f.id !== doc.folderId
+                ? [
+                    <ContextMenuItem
+                      key={f.id}
+                      onClick={() => void moveDocToFolder(doc, f.id)}
+                    >
+                      {f.name}
+                    </ContextMenuItem>,
+                  ]
+                : []
+            )}
           </ContextMenuSubContent>
         </ContextMenuSub>
       )}
@@ -440,6 +376,7 @@ export function DocumentsView() {
         <FolderTree
           currentFolderId={currentFolderId}
           onSelect={setCurrentFolderId}
+          actions={folderActions}
         />
       </aside>
       <Sheet open={treeSheetOpen} onOpenChange={setTreeSheetOpen}>
@@ -452,6 +389,7 @@ export function DocumentsView() {
                 setCurrentFolderId(id)
                 setTreeSheetOpen(false)
               }}
+              actions={folderActions}
             />
           </div>
         </SheetContent>
@@ -540,24 +478,31 @@ export function DocumentsView() {
                 <LayoutGrid />
               </ToggleGroupItem>
             </ToggleGroup>
-            {canShareCurrentFolder && (
+            {canShareCurrentFolder && currentFolder && (
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setShareOpen(true)}
+                onClick={() => setShareFolder(currentFolder)}
               >
                 <Users />
                 <span className="hidden sm:inline">
                   Share
-                  {(currentFolder?.accessEmails?.length ?? 1) > 1 &&
-                    ` (${(currentFolder?.accessEmails?.length ?? 1) - 1})`}
+                  {(currentFolder.accessEmails?.length ?? 1) > 1 &&
+                    ` (${(currentFolder.accessEmails?.length ?? 1) - 1})`}
                 </span>
               </Button>
             )}
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setNewFolderOpen(true)}
+              onClick={() =>
+                setFolderDialog({
+                  open: true,
+                  folder: null,
+                  parentId:
+                    currentFolder?.source === "upload" ? currentFolder.id : null,
+                })
+              }
             >
               <FolderPlus /> <span className="hidden sm:inline">New folder</span>
             </Button>
@@ -616,16 +561,18 @@ export function DocumentsView() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start">
-                {folders
-                  .filter((f) => f.source !== "sharepoint")
-                  .map((f) => (
-                    <DropdownMenuItem
-                      key={f.id}
-                      onClick={() => void bulkAddToFolder(f.id)}
-                    >
-                      {f.name}
-                    </DropdownMenuItem>
-                  ))}
+                {folders.flatMap((f) =>
+                  f.source !== "sharepoint"
+                    ? [
+                        <DropdownMenuItem
+                          key={f.id}
+                          onClick={() => void bulkAddToFolder(f.id)}
+                        >
+                          {f.name}
+                        </DropdownMenuItem>,
+                      ]
+                    : []
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
             <Button
@@ -813,57 +760,38 @@ export function DocumentsView() {
         open={previewDocId !== null}
         onOpenChange={(open) => !open && setPreviewDocId(null)}
       />
-      {currentFolder && (
+      {shareFolder && (
         <ShareDialog
-          open={shareOpen}
-          onOpenChange={setShareOpen}
-          title={`Share “${currentFolder.name}”`}
+          open={shareFolder !== null}
+          onOpenChange={(open) => !open && setShareFolder(null)}
+          title={`Share “${shareFolder.name}”`}
           description="People you add can see every document in this folder and use it to ground their chats. Email matching is case-insensitive."
-          ownerEmail={currentFolder.createdBy ?? liveUserEmail}
-          emails={(currentFolder.accessEmails ?? []).filter(
-            (e) => e.toLowerCase() !== (currentFolder.createdBy ?? liveUserEmail).toLowerCase()
+          ownerEmail={shareFolder.createdBy ?? liveUserEmail}
+          emails={(shareFolder.accessEmails ?? []).filter(
+            (e) => e.toLowerCase() !== (shareFolder.createdBy ?? liveUserEmail).toLowerCase()
           )}
           onSave={saveFolderShare}
         />
       )}
 
-      {/* New folder dialog */}
-      <Dialog open={newFolderOpen} onOpenChange={setNewFolderOpen}>
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle>New folder</DialogTitle>
-            <DialogDescription>
-              Create a folder{" "}
-              {currentFolder && currentFolder.source === "upload"
-                ? `inside “${currentFolder.name}”`
-                : "at the top level"}
-              .
-            </DialogDescription>
-          </DialogHeader>
-          <Input
-            autoFocus
-            placeholder="Folder name"
-            value={newFolderName}
-            onChange={(e) => setNewFolderName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && newFolderName.trim()) {
-                void createNewFolder()
-              }
-            }}
-          />
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setNewFolderOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              disabled={!newFolderName.trim()}
-              onClick={() => void createNewFolder()}
-            >
-              Create
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <DocFolderDialog
+        open={folderDialog.open}
+        onOpenChange={(open) =>
+          setFolderDialog((prev) => ({ ...prev, open }))
+        }
+        folder={folderDialog.folder}
+        parentId={folderDialog.parentId}
+        parentName={
+          folderDialog.parentId
+            ? folders.find((f) => f.id === folderDialog.parentId)?.name
+            : undefined
+        }
+      />
+      <DeleteDocFolderDialog
+        open={deleteFolder !== null}
+        onOpenChange={(open) => !open && setDeleteFolder(null)}
+        folder={deleteFolder}
+      />
     </div>
   )
 }

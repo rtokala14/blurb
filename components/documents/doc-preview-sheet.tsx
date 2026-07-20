@@ -13,7 +13,8 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 
-import { DocIcon, docTypeLabel } from "@/components/doc-icon"
+import { DocIcon } from "@/components/doc-icon"
+import { docTypeLabel } from "@/components/doc-icon-config"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"

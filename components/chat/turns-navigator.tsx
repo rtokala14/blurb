@@ -48,7 +48,7 @@ export function TurnsNavigator({
         return (
           <Tooltip key={turn.id} delayDuration={100}>
             <TooltipTrigger asChild>
-              <button
+              <button type="button"
                 onClick={() => onJump(turn.id)}
                 aria-label={`Jump to turn ${i + 1}`}
                 aria-current={isActive ? "true" : undefined}

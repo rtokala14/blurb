@@ -75,25 +75,25 @@ export async function DELETE(
 
     const sessions = await listSessionsInChatFolder(id)
     const timestamp = new Date().toISOString()
-    let deleted = 0
-    let unfiled = 0
-    for (const session of sessions) {
-      if (deleteSessions) {
-        await updateSessionRow(pk(session), {
-          isDeleted: true,
-          deletedAt: timestamp,
-          updatedAt: timestamp,
-        })
-        deleted++
-      } else {
-        // explicit null clears the assignment (omitted params are preserved)
-        await updateSessionRow(pk(session), {
-          chatFolderId: null,
-          updatedAt: timestamp,
-        })
-        unfiled++
-      }
-    }
+    // Each session is a distinct row, so the updates are independent — fan
+    // them out concurrently instead of awaiting one write at a time.
+    await Promise.all(
+      sessions.map((session) =>
+        deleteSessions
+          ? updateSessionRow(pk(session), {
+              isDeleted: true,
+              deletedAt: timestamp,
+              updatedAt: timestamp,
+            })
+          : // explicit null clears the assignment (omitted params are preserved)
+            updateSessionRow(pk(session), {
+              chatFolderId: null,
+              updatedAt: timestamp,
+            })
+      )
+    )
+    const deleted = deleteSessions ? sessions.length : 0
+    const unfiled = deleteSessions ? 0 : sessions.length
     await softDeleteChatFolder(owned.folder)
     return json({
       success: true,

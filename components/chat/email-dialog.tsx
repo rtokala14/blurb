@@ -106,13 +106,14 @@ export function EmailDialog({
   const [state, setState] = React.useState<"editing" | "sending" | "sent">("editing")
   const timers = React.useRef<ReturnType<typeof setInterval | typeof setTimeout>[]>([])
 
-  React.useEffect(() => {
+  const [prevOpen, setPrevOpen] = React.useState(open)
+  if (open !== prevOpen) {
+    setPrevOpen(open)
     if (open) {
       setBody(draftEmail(message, session, tone, length, citedDocNames))
       setState("editing")
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open])
+  }
 
   React.useEffect(() => {
     const pending = timers.current

@@ -31,8 +31,8 @@ describe("docTypeFromName", () => {
   const cases: [string, string][] = [
     ["a.pdf", "pdf"],
     ["b.docx", "docx"],
-    ["c.xlsx", "xlsx"],
-    ["d.pptx", "pptx"],
+    ["c.xlsx", "pdf"],
+    ["d.pptx", "pdf"],
     ["e.csv", "csv"],
     ["f.md", "md"],
     ["noext", "pdf"],

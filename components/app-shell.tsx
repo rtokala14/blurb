@@ -17,8 +17,8 @@ import { Toaster } from "@/components/ui/sonner"
 const titles: [string, string][] = [
   ["/chat", "Chat"],
   ["/documents", "Documents"],
-  ["/studio", "Studio"],
   ["/connections", "Connections"],
+  ["/settings", "Settings"],
 ]
 
 export function AppShell({ children }: { children: React.ReactNode }) {

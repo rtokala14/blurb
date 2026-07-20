@@ -303,7 +303,14 @@ const indexStatusInFlight = new Map<string, Promise<void>>()
 export async function getIndexStatusForDocs(
   docIds: string[]
 ): Promise<Map<string, IndexStatusRow>> {
-  const unique = [...new Set(docIds.map(String).filter(Boolean))]
+  const unique = [
+    ...new Set(
+      docIds.flatMap((id) => {
+        const s = String(id)
+        return s ? [s] : []
+      })
+    ),
+  ]
   const now = Date.now()
   const missing: string[] = []
   const waits: Promise<void>[] = []
@@ -591,17 +598,20 @@ export async function removeDocFromFolders(
   docId: string,
   folders: FolderRow[]
 ): Promise<string[]> {
-  const removedFrom: string[] = []
-  for (const folder of folders) {
-    const contents = (folder.contents ?? []).map(String)
-    if (!contents.includes(docId)) continue
-    await applyAction("edit-orbit-folders", {
-      OrbitFolders: pk(folder),
-      contents: contents.filter((id) => id !== docId),
-      updatedAt: now(),
+  // Each folder edit targets a distinct row, so run them concurrently.
+  const results = await Promise.all(
+    folders.map(async (folder) => {
+      const contents = (folder.contents ?? []).map(String)
+      if (!contents.includes(docId)) return null
+      await applyAction("edit-orbit-folders", {
+        OrbitFolders: pk(folder),
+        contents: contents.filter((id) => id !== docId),
+        updatedAt: now(),
+      })
+      return folder.name ?? pk(folder)
     })
-    removedFrom.push(folder.name ?? pk(folder))
-  }
+  )
+  const removedFrom = results.filter((name): name is string => name !== null)
   if (removedFrom.length > 0) invalidateFolderCache()
   return removedFrom
 }
@@ -616,7 +626,10 @@ export async function createFolder(params: {
   const creator = normalizeEmail(params.createdBy)
   const accessEmails = [
     creator,
-    ...(params.accessEmails ?? []).map(normalizeEmail).filter((e) => e !== creator),
+    ...(params.accessEmails ?? []).flatMap((e) => {
+      const email = normalizeEmail(e)
+      return email !== creator ? [email] : []
+    }),
   ]
   const response = await applyAction(
     "create-orbit-folders",
@@ -903,7 +916,14 @@ export async function sanitizeAttachments(
     }
   }
 
-  const uniqueDocs = [...new Set(requestedDocs.map(String).filter(Boolean))]
+  const uniqueDocs = [
+    ...new Set(
+      requestedDocs.flatMap((id) => {
+        const s = String(id)
+        return s ? [s] : []
+      })
+    ),
+  ]
   const rows = await getObjectsByIds<DocRow>("OrbitDocsList", "primaryKey_", uniqueDocs)
   const sanitizedDocs: string[] = []
   for (const docId of uniqueDocs) {
@@ -1250,7 +1270,10 @@ export function serializeSyncSource(row: SyncSourceRow) {
     errorCount: row.errorCount ?? 0,
     sourceWebUrl: row.sourceWebUrl ?? null,
     ownerEmail: normalizeEmail(row.ownerEmail),
-    sharedWith: (row.sharedWith ?? []).map(normalizeEmail).filter(Boolean),
+    sharedWith: (row.sharedWith ?? []).flatMap((e) => {
+      const email = normalizeEmail(e)
+      return email ? [email] : []
+    }),
   }
 }
 

@@ -83,14 +83,15 @@ export function DocEditor({
       return
     }
     setRevealed(0)
+    // Local counter keeps the state updater pure (no clearInterval inside it).
+    let count = 0
     const interval = setInterval(() => {
-      setRevealed((r) => {
-        if (r >= sections.length) {
-          clearInterval(interval)
-          return r
-        }
-        return r + 1
-      })
+      if (count >= sections.length) {
+        clearInterval(interval)
+        return
+      }
+      count += 1
+      setRevealed(count)
     }, 1500)
     return () => clearInterval(interval)
   }, [generating])

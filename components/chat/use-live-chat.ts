@@ -246,8 +246,6 @@ export function useLiveChat(sessionId: string) {
             sessionTraceId,
             // "thinking" routes the turn to the deep-research agent
             mode: session.mode === "thinking" ? "thinking" : undefined,
-            // attached persona frames the turn (server resolves + injects)
-            personaId: session.personaId ?? undefined,
             docSkillId: docSkill?.id,
           },
           {

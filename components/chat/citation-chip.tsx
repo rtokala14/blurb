@@ -32,7 +32,7 @@ export function CitationChip({
   return (
     <HoverCard openDelay={200} closeDelay={80}>
       <HoverCardTrigger asChild>
-        <button
+        <button type="button"
           onClick={() => onOpen(citation)}
           aria-label={`Citation ${citation.n}: ${name}, ${pageLabel}`}
           className="bg-primary/8 text-primary hover:bg-primary/15 ring-primary/20 mx-0.5 inline-flex size-4.5 translate-y-[-1px] items-center justify-center rounded-full text-[10px] font-semibold ring-1 transition-colors dark:bg-primary/15 dark:hover:bg-primary/25"

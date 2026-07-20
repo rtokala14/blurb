@@ -5,7 +5,7 @@ import dynamic from "next/dynamic"
 import { ArrowUp, FileDown, History, UploadCloud, X } from "lucide-react"
 import { toast } from "sonner"
 
-import { artifactMeta } from "@/components/chat/artifact-card"
+import { artifactMeta } from "@/components/chat/artifact-meta"
 import { DocIcon } from "@/components/doc-icon"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -33,17 +33,13 @@ import { cn } from "@/lib/utils"
 import { useOrbit } from "@/lib/store"
 import type { Artifact } from "@/lib/types"
 
-// The four editors are heavy and mutually exclusive (only one renders per
-// artifact), so code-split them: the chat/studio route no longer bundles all
-// four up front. Client-only (they animate with timers), with a light fallback.
+// The editors are heavy and mutually exclusive (only one renders per
+// artifact), so code-split them: the chat/studio route doesn't bundle them
+// up front. Client-only (they animate with timers), with a light fallback.
 const EDITOR_LOADING = (
   <div className="flex h-full items-center justify-center">
     <Spinner className="size-4" />
   </div>
-)
-const DeckEditor = dynamic(
-  () => import("@/components/studio/deck-editor").then((m) => m.DeckEditor),
-  { ssr: false, loading: () => EDITOR_LOADING }
 )
 const DocEditor = dynamic(
   () => import("@/components/studio/doc-editor").then((m) => m.DocEditor),
@@ -53,16 +49,12 @@ const LiveDocEditor = dynamic(
   () => import("@/components/studio/live-doc-editor").then((m) => m.LiveDocEditor),
   { ssr: false, loading: () => EDITOR_LOADING }
 )
-const SheetEditor = dynamic(
-  () => import("@/components/studio/sheet-editor").then((m) => m.SheetEditor),
-  { ssr: false, loading: () => EDITOR_LOADING }
-)
 
 /**
- * The Studio: where AI-created documents, spreadsheets, and decks are
- * reviewed and edited. Rendered as a side panel in Chat and full-page
- * on /studio. Live artifacts (generated on Foundry) get the real editor,
- * exports, and save-to-library; demo artifacts keep the simulation.
+ * The Studio: where AI-created documents are reviewed and edited. Rendered as
+ * a side panel in Chat and full-page on /studio. Live artifacts (generated on
+ * Foundry) get the real editor, exports, and save-to-library; demo artifacts
+ * keep the simulation.
  */
 export function StudioPanel({
   artifact,
@@ -214,13 +206,7 @@ export function StudioPanel({
     toast.success(`Restored v${v}`)
   }
 
-  const Editor = isLive
-    ? LiveDocEditor
-    : artifact.kind === "doc"
-      ? DocEditor
-      : artifact.kind === "sheet"
-        ? SheetEditor
-        : DeckEditor
+  const Editor = isLive ? LiveDocEditor : DocEditor
 
   return (
     <div className={cn("bg-background flex h-full min-h-0 flex-col", !standalone && "border-l")}>
@@ -400,11 +386,7 @@ export function StudioPanel({
                 ? "AI is editing…"
                 : isLive
                   ? "Ask AI to edit — click a section first to scope it, or leave unselected for the whole document"
-                  : artifact.kind === "sheet"
-                    ? "Ask AI to edit — e.g. “add a −10% scenario column”"
-                    : artifact.kind === "deck"
-                      ? "Ask AI to edit — e.g. “sharpen this slide's bullets”"
-                      : "Ask AI to edit — e.g. “add a benchmarking point to Leverage”"
+                  : "Ask AI to edit — e.g. “add a benchmarking point to Leverage”"
             }
             className="h-9 pr-10"
           />

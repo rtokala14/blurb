@@ -61,18 +61,6 @@ export function persistDocDraft(
   }
 }
 
-export function clearDocDraft(artifactId: string): void {
-  if (typeof window === "undefined") return
-  const drafts = readDrafts()
-  if (!(artifactId in drafts)) return
-  delete drafts[artifactId]
-  try {
-    window.localStorage.setItem(DRAFT_STORE_KEY, JSON.stringify(drafts))
-  } catch {
-    /* ignore */
-  }
-}
-
 export function readDocDraft(artifactId: string): StoredDraft | null {
   return readDrafts()[artifactId] ?? null
 }

@@ -42,9 +42,10 @@ export async function PUT(
     }
     const sharedWith = [
       ...new Set(
-        body.sharedWith
-          .map((e) => normalizeEmail(String(e)))
-          .filter((e) => e && !sameEmail(e, userEmail))
+        body.sharedWith.flatMap((e) => {
+          const email = normalizeEmail(String(e))
+          return email && !sameEmail(email, userEmail) ? [email] : []
+        })
       ),
     ]
     const invalid = sharedWith.filter((e) => !EMAIL_RE.test(e))

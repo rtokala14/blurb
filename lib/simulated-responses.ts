@@ -37,17 +37,8 @@ function detectArtifact(prompt: string): { kind: ArtifactKind; title: string } |
   const p = prompt.toLowerCase()
   const wantsCreation =
     /\b(create|draft|write|build|make|generate|put together|prepare)\b/.test(p) ||
-    p.startsWith("/doc") ||
-    p.startsWith("/sheet") ||
-    p.startsWith("/deck")
+    p.startsWith("/doc")
   if (!wantsCreation) return undefined
-  if (p.startsWith("/deck") || /\b(deck|presentation|slides?|ppt|pitch)\b/.test(p))
-    return { kind: "deck", title: titleFromPrompt(prompt, "New presentation") }
-  if (
-    p.startsWith("/sheet") ||
-    /\b(spreadsheet|excel|xlsx?|model|table|tracker|budget sheet)\b/.test(p)
-  )
-    return { kind: "sheet", title: titleFromPrompt(prompt, "New spreadsheet") }
   if (
     p.startsWith("/doc") ||
     /\b(doc|document|memo|brief|summary doc|report|one[- ]pager|letter|proposal)\b/.test(p)
@@ -58,8 +49,6 @@ function detectArtifact(prompt: string): { kind: ArtifactKind; title: string } |
 
 const artifactNouns: Record<ArtifactKind, string> = {
   doc: "document",
-  sheet: "spreadsheet",
-  deck: "presentation",
 }
 
 export function simulateResponse(
@@ -112,12 +101,7 @@ export function simulateResponse(
             id: uid("t"),
             kind: "tool" as const,
             label: `Creating ${artifactNouns[artifact.kind]} “${artifact.title}”`,
-            detail:
-              artifact.kind === "deck"
-                ? "Drafting slides with speaker notes and source references"
-                : artifact.kind === "sheet"
-                  ? "Building tabs, formulas, and a summary view"
-                  : "Drafting sections with tracked AI insertions",
+            detail: "Drafting sections with tracked AI insertions",
           },
         ]
       : [
@@ -137,10 +121,7 @@ export function simulateResponse(
     const noun = artifactNouns[artifact.kind]
     content =
       `I've drafted **${artifact.title}** as a working ${noun}, grounded in the ${cited.length || "selected"} sources in scope.\n\n` +
-      (artifact.kind === "deck"
-        ? `The draft has 10 slides: an executive summary, three insight sections built from the source material ${src(1)}, and a closing asks slide. Speaker notes carry a source reference for every figure ${src(2)}.\n\n`
-        : artifact.kind === "sheet"
-          ? `It contains three tabs — inputs, model, and summary. Key drivers are pulled from the sources ${src(1)}, and each computed cell notes its assumption ${src(2)}.\n\n` : `It's organized into five sections, with the key obligations and figures pulled directly from the sources ${src(1)}${src(2) ? ` ${src(2)}` : ""}. AI-drafted passages are highlighted for your review.\n\n`) +
+      `It's organized into five sections, with the key obligations and figures pulled directly from the sources ${src(1)}${src(2) ? ` ${src(2)}` : ""}. AI-drafted passages are highlighted for your review.\n\n` +
       `It's open in the Studio panel — you can review the generation live, ask me for edits, or refine sections yourself.`
   } else if (cited.length === 0) {
     content =
@@ -158,7 +139,7 @@ export function simulateResponse(
         : "") +
       `- The notice window and thresholds are the binding constraints ${src(1)}\n` +
       `- Figures reconcile across sources with no material conflicts ${src(2) || src(1)}\n\n` +
-      `Want me to draft this up as a document, model it in a spreadsheet, or turn it into slides?`
+      `Want me to draft this up as a document?`
   }
 
   return { thinking, content, citations, artifact }

@@ -11,13 +11,6 @@ export function formatDate(iso: string): string {
   })
 }
 
-export function formatTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-  })
-}
-
 export function relativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime()
   const minutes = Math.round(diff / 60000)
