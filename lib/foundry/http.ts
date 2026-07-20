@@ -6,14 +6,13 @@ import { FoundryError } from "./client"
 import { isFoundryConfigured } from "./config"
 import { UserResolutionError } from "./user"
 
-/** 503 guard: routes only run in live mode; the UI checks /config first. */
+/** 503 guard: every route requires Foundry; the UI checks /config first. */
 export function requireLive(): NextResponse | null {
   if (isFoundryConfigured()) return null
   return NextResponse.json(
     {
       error: "Foundry is not configured",
-      demo: true,
-      hint: "Set FOUNDRY_TOKEN or FOUNDRY_CLIENT_ID/FOUNDRY_CLIENT_SECRET in .env.local",
+      hint: "Set FOUNDRY_TOKEN or FOUNDRY_CLIENT_ID/FOUNDRY_CLIENT_SECRET",
     },
     { status: 503 }
   )

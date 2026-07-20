@@ -19,7 +19,6 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
-import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 import { useOrbit } from "@/lib/store"
 import type { ChatMessage, ThinkingKind } from "@/lib/types"
@@ -61,14 +60,13 @@ export function ThinkingIndicator({ message }: { message: ChatMessage }) {
         )}
       >
         {active ? (
-          <>
-            <Spinner className="size-3.5" />
-            <span className="thinking-shimmer">
-              {thinking.length === 0
-                ? "Thinking…"
-                : thinking[thinking.length - 1].label}
-            </span>
-          </>
+          /* The message avatar already shows the live orbit mark, so keep
+             this row to the shimmer label alone. */
+          <span className="thinking-shimmer">
+            {thinking.length === 0
+              ? "Thinking…"
+              : thinking[thinking.length - 1].label}
+          </span>
         ) : (
           <>
             <Brain className="size-3.5" />

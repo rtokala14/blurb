@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { CheckCircle2, CloudUpload, FilePlus2, Mail, X } from "lucide-react"
+import { CheckCircle2, CloudUpload, Mail, X } from "lucide-react"
 import { toast } from "sonner"
 
 import { DocIcon } from "@/components/doc-icon"
@@ -30,24 +30,21 @@ import { formatSize } from "@/lib/format"
 import { liveApi } from "@/lib/live-api"
 import { mapLiveDoc } from "@/lib/live-map"
 import { uid, useOrbit } from "@/lib/store"
-import type { Doc, DocType } from "@/lib/types"
+import type { DocType } from "@/lib/types"
 
 interface PendingFile {
   id: string
   name: string
   type: DocType
   sizeKB: number
-  /** doc id once the simulated upload has started */
+  /** doc id once the upload has started */
   docId?: string
-  /** the real File (live mode only) */
+  /** the real File to upload */
   file?: File
 }
 
-const sampleFiles: Array<Pick<PendingFile, "name" | "type" | "sizeKB">> = [
-  { name: "Initech Services Agreement (draft).pdf", type: "pdf", sizeKB: 1840 },
-  { name: "FY27 Headcount Plan.pdf", type: "pdf", sizeKB: 388 },
-  { name: "Partner Launch Brief.docx", type: "docx", sizeKB: 152 },
-]
+/** sentinel Select value standing in for "no folder" (the library root) */
+const ROOT_FOLDER = "__root__"
 
 function typeFromName(name: string): DocType {
   const ext = name.split(".").pop()?.toLowerCase()
@@ -75,19 +72,23 @@ export function UploadDialog({
 }) {
   const folders = useOrbit((s) => s.folders)
   const docs = useOrbit((s) => s.docs)
-  const addDoc = useOrbit((s) => s.addDoc)
   const updateDoc = useOrbit((s) => s.updateDoc)
   const pushActivity = useOrbit((s) => s.pushActivity)
-  const isLive = useOrbit((s) => s.live === true)
 
   const [files, setFiles] = React.useState<PendingFile[]>([])
   const [folderId, setFolderId] = React.useState<string>(
-    defaultFolderId ?? "f-finance"
+    defaultFolderId ?? ROOT_FOLDER
   )
   const [dragging, setDragging] = React.useState(false)
   const [running, setRunning] = React.useState(false)
+  const liveUserEmail = useOrbit((s) => s.liveUserEmail)
   const [notifyEnabled, setNotifyEnabled] = React.useState(true)
-  const [notifyEmail, setNotifyEmail] = React.useState("tokalarr@gmail.com")
+  const [notifyEmail, setNotifyEmail] = React.useState(
+    liveUserEmail || "rohit.tokala@jacobs.com"
+  )
+  React.useEffect(() => {
+    if (liveUserEmail) setNotifyEmail(liveUserEmail)
+  }, [liveUserEmail])
   const inputRef = React.useRef<HTMLInputElement>(null)
   const timers = React.useRef<ReturnType<typeof setInterval>[]>([])
   /** the in-flight batch: notify once when every doc in it is ready */
@@ -106,15 +107,6 @@ export function UploadDialog({
     const pending = timers.current
     return () => pending.forEach(clearInterval)
   }, [])
-
-  const uploadingDocs = docs.filter((d) =>
-    files.some((f) => f.docId === d.id)
-  )
-  const allDone =
-    !isLive &&
-    running &&
-    uploadingDocs.length > 0 &&
-    uploadingDocs.every((d) => d.status === "ready")
 
   const queue = (items: Array<Pick<PendingFile, "name" | "type" | "sizeKB" | "file">>) =>
     setFiles((prev) => [
@@ -137,7 +129,6 @@ export function UploadDialog({
     setDragging(false)
     const dropped = Array.from(e.dataTransfer.files ?? [])
     if (dropped.length) queueRealFiles(dropped)
-    else if (!isLive) queue(sampleFiles)
   }
 
   /** POST the batch to the SendGrid-backed notification route. */
@@ -193,8 +184,8 @@ export function UploadDialog({
       })
   }, [])
 
-  /** Live upload: POST real files to Foundry, refresh, then poll indexing. */
-  const startLive = async () => {
+  /** Upload: POST real files to Foundry, refresh, then poll indexing. */
+  const start = async () => {
     setRunning(true)
     const realFiles = files.flatMap((f) =>
       f.file ? [{ file: f.file, name: f.name }] : []
@@ -204,19 +195,23 @@ export function UploadDialog({
       toast.error("No files to upload")
       return
     }
+    const targetFolderId =
+      folderId !== ROOT_FOLDER && folders.some((f) => f.id === folderId)
+        ? folderId
+        : null
     try {
-      await liveApi.uploadDocs(realFiles)
+      await liveApi.uploadDocs(realFiles, targetFolderId)
       pushActivity({
         kind: "upload",
-        text: `Uploaded ${realFiles.length} ${realFiles.length === 1 ? "file" : "files"} to Foundry`,
+        text: `Uploaded ${realFiles.length} ${realFiles.length === 1 ? "file" : "files"}`,
         detail: "Indexing in progress",
       })
-      toast.success("Uploaded to Foundry", {
+      toast.success("Uploaded", {
         description: "Indexing runs in the background; statuses refresh automatically.",
       })
 
       const { data } = await liveApi.docs()
-      const mapped = data.map((d) => mapLiveDoc(d, new Map()))
+      const mapped = data.map((d) => mapLiveDoc(d))
       useOrbit.setState((prev) => ({
         docs: mapped.map((doc) => {
           // keep any folder assignment the store already knew about
@@ -267,84 +262,6 @@ export function UploadDialog({
       const message = error instanceof Error ? error.message : "Upload failed"
       toast.error("Upload failed", { description: message })
     }
-  }
-
-  const start = () => {
-    if (isLive) {
-      void startLive()
-      return
-    }
-    setRunning(true)
-    const batchIds: string[] = []
-    setFiles((prev) =>
-      prev.map((file) => {
-        if (file.docId) {
-          batchIds.push(file.docId)
-          return file
-        }
-        const docId = uid("d")
-        batchIds.push(docId)
-        const doc: Doc = {
-          id: docId,
-          name: file.name,
-          type: file.type,
-          folderId,
-          source: "upload",
-          status: "uploading",
-          sizeKB: file.sizeKB,
-          pages: Math.max(2, Math.round(file.sizeKB / 120)),
-          owner: "Rohit Tokala",
-          updatedAt: new Date().toISOString(),
-          tags: [],
-          summary: "Freshly uploaded — summary will appear once indexing completes.",
-          version: 1,
-          progress: 0,
-        }
-        addDoc(doc)
-        const timer = setInterval(() => {
-          const current = useOrbit.getState().docs.find((d) => d.id === docId)
-          if (!current) return clearInterval(timer)
-          const next = Math.min(100, (current.progress ?? 0) + 4 + Math.random() * 9)
-          const status =
-            next >= 100
-              ? "ready"
-              : next > 78
-                ? "indexing"
-                : next > 45
-                  ? "processing"
-                  : "uploading"
-          updateDoc(docId, {
-            progress: next,
-            status,
-            ...(status === "ready"
-              ? {
-                  progress: undefined,
-                  summary:
-                    "Indexed and searchable. Ask about this document in Chat to see grounded answers with citations.",
-                }
-              : null),
-          })
-          if (next >= 100) {
-            clearInterval(timer)
-            toast.success(`${file.name} is indexed and ready`)
-            maybeNotify()
-          }
-        }, 350)
-        timers.current.push(timer)
-        return { ...file, docId }
-      })
-    )
-    batchRef.current = {
-      ids: batchIds,
-      email: notifyEmail.trim(),
-      enabled: notifyEnabled && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(notifyEmail),
-      notified: false,
-    }
-    pushActivity({
-      kind: "upload",
-      text: `Uploaded ${files.length} ${files.length === 1 ? "file" : "files"}`,
-      detail: folders.find((f) => f.id === folderId)?.name,
-    })
   }
 
   const reset = () => {
@@ -406,16 +323,6 @@ export function UploadDialog({
                 }}
               />
             </div>
-            {!isLive && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="self-start"
-                onClick={() => queue(sampleFiles)}
-              >
-                <FilePlus2 /> Add sample files instead
-              </Button>
-            )}
           </>
         )}
 
@@ -474,6 +381,7 @@ export function UploadDialog({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value={ROOT_FOLDER}>Library (root)</SelectItem>
               {folders.flatMap((f) =>
                 f.source === "upload"
                   ? [
@@ -520,22 +428,16 @@ export function UploadDialog({
         </div>
 
         <DialogFooter>
-          {allDone ? (
-            <Button onClick={() => onOpenChange(false)}>Done</Button>
-          ) : (
-            <>
-              <Button variant="outline" onClick={() => onOpenChange(false)}>
-                Cancel
-              </Button>
-              <Button onClick={start} disabled={files.length === 0 || running}>
-                {running
-                  ? "Uploading…"
-                  : `Upload ${files.length > 0 ? files.length : ""} ${
-                      files.length === 1 ? "file" : "files"
-                    }`}
-              </Button>
-            </>
-          )}
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button onClick={() => void start()} disabled={files.length === 0 || running}>
+            {running
+              ? "Uploading…"
+              : `Upload ${files.length > 0 ? files.length : ""} ${
+                  files.length === 1 ? "file" : "files"
+                }`}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

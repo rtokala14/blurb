@@ -33,17 +33,13 @@ import { cn } from "@/lib/utils"
 import { useOrbit } from "@/lib/store"
 import type { Artifact } from "@/lib/types"
 
-// The editors are heavy and mutually exclusive (only one renders per
-// artifact), so code-split them: the chat/studio route doesn't bundle them
-// up front. Client-only (they animate with timers), with a light fallback.
+// The editor is heavy, so code-split it: the chat/studio route doesn't
+// bundle it up front. Client-only (it animates with timers), with a light
+// fallback.
 const EDITOR_LOADING = (
   <div className="flex h-full items-center justify-center">
     <Spinner className="size-4" />
   </div>
-)
-const DocEditor = dynamic(
-  () => import("@/components/studio/doc-editor").then((m) => m.DocEditor),
-  { ssr: false, loading: () => EDITOR_LOADING }
 )
 const LiveDocEditor = dynamic(
   () => import("@/components/studio/live-doc-editor").then((m) => m.LiveDocEditor),
@@ -52,9 +48,8 @@ const LiveDocEditor = dynamic(
 
 /**
  * The Studio: where AI-created documents are reviewed and edited. Rendered as
- * a side panel in Chat and full-page on /studio. Live artifacts (generated on
- * Foundry) get the real editor, exports, and save-to-library; demo artifacts
- * keep the simulation.
+ * a side panel in Chat and full-page on /studio. Artifacts are generated on
+ * Foundry and get the real editor, exports, and save-to-library.
  */
 export function StudioPanel({
   artifact,
@@ -78,7 +73,6 @@ export function StudioPanel({
 
   const meta = artifactMeta[artifact.kind]
   const generating = artifact.status === "generating"
-  const isLive = artifact.live === true
   const model = artifact.model
 
   const sources = artifact.sourceDocIds
@@ -98,9 +92,8 @@ export function StudioPanel({
   }
 
   /**
-   * Demo editors report an applied edit (summary). The live editor reports
-   * null when the refine response lands — accept/reject and persistence
-   * happen inside it.
+   * The editor reports null when the refine response lands — accept/reject
+   * and persistence happen inside it.
    */
   const handleEditDone = React.useCallback(
     (summary: string | null) => {
@@ -206,7 +199,7 @@ export function StudioPanel({
     toast.success(`Restored v${v}`)
   }
 
-  const Editor = isLive ? LiveDocEditor : DocEditor
+  const Editor = LiveDocEditor
 
   return (
     <div className={cn("bg-background flex h-full min-h-0 flex-col", !standalone && "border-l")}>
@@ -220,7 +213,7 @@ export function StudioPanel({
               <span className="thinking-shimmer">AI is generating…</span>
             ) : (
               (artifact.lastEditSummary ??
-                (isLive && model
+                (model
                   ? `${meta.label} · ${model.meta.revision} · grounded in ${citedNames.length || "your"} ${citedNames.length === 1 ? "source" : "sources"}`
                   : `${meta.label} · ready`))
             )}
@@ -231,14 +224,14 @@ export function StudioPanel({
             <>
               <Spinner className="size-3" /> Drafting
             </>
-          ) : isLive && model ? (
+          ) : model ? (
             model.meta.revision
           ) : (
             "Draft"
           )}
         </Badge>
 
-        {isLive && model && !generating && (
+        {model && !generating && (
           <>
             <DropdownMenu>
               <Tooltip>
@@ -295,20 +288,13 @@ export function StudioPanel({
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-72">
             <DropdownMenuLabel>Grounded in</DropdownMenuLabel>
-            {isLive
-              ? citedNames.length > 0
-                ? citedNames.slice(0, 8).map((name) => (
-                  <DropdownMenuItem key={name}>
-                    <DocIcon type="pdf" />
-                    <span className="truncate">{name}</span>
-                  </DropdownMenuItem>
-                ))
-                : sources.map((doc) => (
-                  <DropdownMenuItem key={doc.id}>
-                    <DocIcon type={doc.type} />
-                    <span className="truncate">{doc.name}</span>
-                  </DropdownMenuItem>
-                ))
+            {citedNames.length > 0
+              ? citedNames.slice(0, 8).map((name) => (
+                <DropdownMenuItem key={name}>
+                  <DocIcon type="pdf" />
+                  <span className="truncate">{name}</span>
+                </DropdownMenuItem>
+              ))
               : sources.map((doc) => (
                 <DropdownMenuItem key={doc.id}>
                   <DocIcon type={doc.type} />
@@ -317,33 +303,24 @@ export function StudioPanel({
               ))}
             <DropdownMenuSeparator />
             <DropdownMenuLabel>Versions</DropdownMenuLabel>
-            {isLive ? (
-              artifact.versions && artifact.versions.length > 0 ? (
-                [...artifact.versions].reverse().map((entry, i) => (
-                  <DropdownMenuItem
-                    key={entry.v}
-                    onClick={() => i !== 0 && restoreVersion(entry.v)}
-                  >
-                    <span className="truncate">
-                      v{entry.v} — {entry.summary}
+            {artifact.versions && artifact.versions.length > 0 ? (
+              [...artifact.versions].reverse().map((entry, i) => (
+                <DropdownMenuItem
+                  key={entry.v}
+                  onClick={() => i !== 0 && restoreVersion(entry.v)}
+                >
+                  <span className="truncate">
+                    v{entry.v} — {entry.summary}
+                  </span>
+                  {i === 0 && (
+                    <span className="text-muted-foreground ml-auto text-xs">
+                      current
                     </span>
-                    {i === 0 && (
-                      <span className="text-muted-foreground ml-auto text-xs">
-                        current
-                      </span>
-                    )}
-                  </DropdownMenuItem>
-                ))
-              ) : (
-                <DropdownMenuItem>v1 — initial AI draft</DropdownMenuItem>
-              )
-            ) : (
-              <>
-                <DropdownMenuItem>
-                  v2 — current {artifact.lastEditSummary ? `· ${artifact.lastEditSummary}` : ""}
+                  )}
                 </DropdownMenuItem>
-                <DropdownMenuItem>v1 — initial AI draft</DropdownMenuItem>
-              </>
+              ))
+            ) : (
+              <DropdownMenuItem>v1 — initial AI draft</DropdownMenuItem>
             )}
           </DropdownMenuContent>
         </DropdownMenu>
@@ -384,9 +361,7 @@ export function StudioPanel({
             placeholder={
               editing
                 ? "AI is editing…"
-                : isLive
-                  ? "Ask AI to edit — click a section first to scope it, or leave unselected for the whole document"
-                  : "Ask AI to edit — e.g. “add a benchmarking point to Leverage”"
+                : "Ask AI to edit — click a section first to scope it, or leave unselected for the whole document"
             }
             className="h-9 pr-10"
           />
@@ -401,9 +376,7 @@ export function StudioPanel({
           </Button>
         </div>
         <p className="text-muted-foreground mt-1.5 text-center text-[10px]">
-          {isLive
-            ? "AI edits arrive as tracked changes — accept or reject before exporting"
-            : `Edits are tracked — accept or reject AI changes in the ${meta.label.toLowerCase()}`}
+          AI edits arrive as tracked changes — accept or reject before exporting
         </p>
       </div>
     </div>

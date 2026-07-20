@@ -6,7 +6,7 @@ import { toast } from "sonner"
 import { chatLineForDoc, isDocEnvelopeContent } from "@/lib/docgen/artifacts"
 import { parseDocEnvelope, parseStreamingDoc } from "@/lib/docgen/parse"
 import { getDocSkill } from "@/lib/docgen/skills"
-import { liveApi, streamTurn } from "@/lib/live-api"
+import { streamTurn } from "@/lib/live-api"
 import { parseStreamingLiveText, parseLiveMessage } from "@/lib/live-citations"
 import { liveCitationToUi } from "@/lib/live-map"
 import { loadSessionContent } from "@/lib/live-session"
@@ -14,15 +14,21 @@ import { uid, useOrbit } from "@/lib/store"
 import type { Artifact, ChatMessage } from "@/lib/types"
 
 /**
- * Live chat driver against Foundry (same interface as useChatSimulation so
- * the workspace can swap them). Persisted state lives on the ontology; this
- * hook keeps optimistic UI + streaming state in the store.
+ * Live chat driver against the v3 pipeline (same interface as
+ * useChatSimulation so the workspace can swap them). Persisted state lives on
+ * the ontology as a message tree; this hook keeps optimistic UI + streaming
+ * state in the store.
+ *
+ * Branching is a pure tree op in v3: regenerate / edit-and-resend send a new
+ * turn under the SAME parent as the original user message, so the server
+ * creates a fresh sibling user+assistant pair and repoints the active leaf. No
+ * branch objects, no thinking mode, no trace polling.
  */
 export function useLiveChat(sessionId: string) {
   const [busyId, setBusyId] = React.useState<string | null>(null)
   const abortRef = React.useRef<AbortController | null>(null)
 
-  /** Load transcript + branches when a live session is opened. */
+  /** Load the message tree when a live session is opened. */
   const loadContent = React.useCallback(async (rid: string) => {
     try {
       await loadSessionContent(rid)
@@ -33,59 +39,13 @@ export function useLiveChat(sessionId: string) {
     }
   }, [])
 
-  /**
-   * Poll the high-level thinking trace while a turn is in flight. The server
-   * only ever returns tool labels + the agent's one-line thought — never raw
-   * tool inputs/outputs — so this is safe to render directly.
-   */
-  const startTracePolling = React.useCallback(
-    (rid: string, assistantMessageId: string, traceId: string) => {
-      let stopped = false
-      let timer: ReturnType<typeof setTimeout> | null = null
-      const tick = async () => {
-        if (stopped) return
-        try {
-          const { status, steps } = await liveApi.trace(rid, traceId)
-          if (stopped) return
-          // Tool calls done but text not flowing yet — fill the dead air so
-          // the indicator never freezes on the last trace line.
-          const display =
-            status === "COMPLETE"
-              ? [
-                ...steps,
-                {
-                  id: "trace-writing",
-                  kind: "synthesize" as const,
-                  label: "Writing the response…",
-                },
-              ]
-              : steps
-          if (display.length > 0) {
-            useOrbit.getState().updateMessage(rid, assistantMessageId, (m) =>
-              // once the reply is streaming/done, leave the message alone
-              m.phase === "thinking" ? { thinking: display } : {}
-            )
-          }
-        } catch {
-          /* trace polling is best-effort — never surface errors */
-        }
-        if (!stopped) timer = setTimeout(tick, 2000)
-      }
-      timer = setTimeout(tick, 1200)
-      return () => {
-        stopped = true
-        if (timer) clearTimeout(timer)
-      }
-    },
-    []
-  )
-
   /** Poll session metadata until the auto-title lands (bounded). */
   const pollTitle = React.useCallback((rid: string) => {
     let attempts = 0
     const tick = async () => {
       attempts += 1
       try {
+        const { liveApi } = await import("@/lib/live-api")
         const session = await liveApi.getSession(rid)
         const title = session.metadata.title
         if (title && title !== "New chat") {
@@ -100,12 +60,19 @@ export function useLiveChat(sessionId: string) {
     setTimeout(tick, 2500)
   }, [])
 
-  const send = React.useCallback(
-    async (text: string, opts?: { docSkillId?: string }) => {
+  /**
+   * Dispatch a turn under `parentMessageId` (null = a new root turn). Used for
+   * a normal send (parent = current leaf), regenerate, and edit-and-resend.
+   */
+  const runTurn = React.useCallback(
+    async (
+      text: string,
+      opts: { parentMessageId: string | null; docSkillId?: string }
+    ) => {
       const store = useOrbit.getState()
       let session = store.sessions.find((s) => s.id === sessionId)
       if (!session) return
-      const docSkill = getDocSkill(opts?.docSkillId)
+      const docSkill = getDocSkill(opts.docSkillId)
       if (session.scopeDocIds.length === 0) {
         toast.error("Select documents first", {
           description: "The agent only answers from documents in scope.",
@@ -115,10 +82,12 @@ export function useLiveChat(sessionId: string) {
 
       // Optimistic UI: the user bubble + thinking placeholder land in the
       // store BEFORE any network round-trip (session creation can take
-      // seconds), with a "sending" state until the server responds.
+      // seconds), with a "sending" state until the server responds. The user
+      // message hangs off `parentMessageId`, so regenerate/edit create a new
+      // sibling group under the same parent.
       const userMessageId = uid("lm")
       const assistantMessageId = uid("lm")
-      const parentId = session.leafId
+      const parentId = opts.parentMessageId
       let rid = session.id
       store.addMessage(rid, {
         id: userMessageId,
@@ -143,7 +112,7 @@ export function useLiveChat(sessionId: string) {
             kind: docSkill ? "synthesize" : "search",
             label: docSkill
               ? `Drafting a ${docSkill.name} from your documents`
-              : "Querying the Foundry agent across your documents",
+              : "Querying across your documents",
             docIds: session.scopeDocIds.slice(0, 4),
           },
         ],
@@ -156,10 +125,11 @@ export function useLiveChat(sessionId: string) {
         useOrbit.getState().updateMessage(rid, userMessageId, { phase: "done" })
       }
 
-      // Local placeholder session → create it on Foundry on first send
+      // Local placeholder session → create it on the server on first send
       // (messages survive the id swap).
       if (!session.live) {
         try {
+          const { liveApi } = await import("@/lib/live-api")
           const created = await liveApi.createSession({
             docsAttached: session.scopeDocIds,
             foldersAttached: session.foldersAttached ?? [],
@@ -167,7 +137,6 @@ export function useLiveChat(sessionId: string) {
           store.replaceSessionId(session.id, created.rid, {
             live: true,
             contentLoaded: true,
-            activeBranchId: created.activeBranchId,
           })
           rid = created.rid
           session = useOrbit.getState().sessions.find((s) => s.id === rid)
@@ -176,7 +145,7 @@ export function useLiveChat(sessionId: string) {
           useOrbit.getState().updateMessage(rid, userMessageId, { phase: "done" })
           useOrbit.getState().updateMessage(rid, assistantMessageId, {
             phase: "done",
-            content: "*(couldn't reach Foundry — try sending again)*",
+            content: "*(couldn't reach the server — try sending again)*",
             errorType: "error",
             thinking: undefined,
           })
@@ -216,43 +185,35 @@ export function useLiveChat(sessionId: string) {
 
       // The turn is now dispatched to the server (the session exists and the
       // assistant thinking indicator takes over). Confirm the user bubble as
-      // sent immediately rather than waiting for the first reply chunk —
-      // otherwise "Sending…" lingers through the entire thinking phase.
+      // sent immediately rather than waiting for the reply.
       markUserSent()
 
-      const sessionTraceId = crypto.randomUUID()
-      const stopTracePolling = startTracePolling(rid, assistantMessageId, sessionTraceId)
-
       const finish = () => {
-        stopTracePolling()
         setBusyId(null)
         abortRef.current = null
       }
 
+      // v3 sends the whole reply as one chunk; still coalesce store writes in
+      // case a proxy splits it, so we never re-render the transcript per byte.
       let lastParsedLength = 0
-      // Throttle chat-text store writes: re-parsing the full accumulated
-      // string + rebuilding the sessions array on EVERY chunk re-renders the
-      // whole (non-virtualized) transcript per token. Coalesce to ~60ms; the
-      // final content is always flushed by onComplete below, so nothing is
-      // lost — this only drops intermediate frames the eye can't see anyway.
       const CHUNK_FLUSH_MS = 60
       let lastFlushAt = 0
+      const personaId = useOrbit.getState().userProfile.personaId
       try {
         await streamTurn(
           rid,
           {
             userInput: text,
-            branchId: session.activeBranchId ?? undefined,
-            sessionTraceId,
-            // "thinking" routes the turn to the deep-research agent
-            mode: session.mode === "thinking" ? "thinking" : undefined,
+            parentMessageId: parentId,
+            personaId,
             docSkillId: docSkill?.id,
+            docsAttached: session.scopeDocIds,
+            foldersAttached: session.foldersAttached ?? [],
           },
           {
             onChunk: (accumulated) => {
               // reply text is flowing — the thinking phase is over
               markUserSent()
-              stopTracePolling()
               if (artifactId && docSkill) {
                 // generation turn: stream into the artifact, not the chat
                 useOrbit.getState().updateMessage(rid, assistantMessageId, {
@@ -331,7 +292,8 @@ export function useLiveChat(sessionId: string) {
                 })
               }
               finish()
-              // Reconcile optimistic ids with persisted rows + fresh title.
+              // Reconcile optimistic ids with persisted rows + fresh leaf/title
+              // (the server already repointed activeLeafMessageId).
               void loadContent(rid)
               const current = useOrbit.getState().sessions.find((s) => s.id === rid)
               if ((current?.title ?? "New chat") === "New chat" || current?.title === "New session") {
@@ -365,7 +327,19 @@ export function useLiveChat(sessionId: string) {
         finish()
       }
     },
-    [sessionId, loadContent, pollTitle, startTracePolling]
+    [sessionId, loadContent, pollTitle]
+  )
+
+  /** Ordinary send: continue from the current leaf. */
+  const send = React.useCallback(
+    async (text: string, opts?: { docSkillId?: string }) => {
+      const session = useOrbit.getState().sessions.find((s) => s.id === sessionId)
+      await runTurn(text, {
+        parentMessageId: session?.leafId ?? null,
+        docSkillId: opts?.docSkillId,
+      })
+    },
+    [sessionId, runTurn]
   )
 
   const stop = React.useCallback(() => {
@@ -380,74 +354,43 @@ export function useLiveChat(sessionId: string) {
     setBusyId(null)
   }, [busyId, sessionId])
 
-  /** Branch from an assistant message (server-side), then reload transcript. */
-  const branchFrom = React.useCallback(
+  /**
+   * Regenerate an assistant message: resend the user turn that produced it
+   * under the same parent, so the server creates a new sibling pair and moves
+   * the active leaf onto the fresh reply.
+   */
+  const regenerate = React.useCallback(
     async (message: ChatMessage) => {
-      try {
-        const result = await liveApi.createBranch(sessionId, message.id)
-        useOrbit.getState().patchSession(sessionId, {
-          activeBranchId: result.activeBranchId,
-        })
-        await loadContent(sessionId)
-        toast.success(`Branched: ${result.branch.name}`, {
-          description: "New replies continue on this branch.",
-        })
-      } catch (error) {
-        toast.error("Couldn't create the branch", {
-          description: error instanceof Error ? error.message : undefined,
-        })
+      const session = useOrbit.getState().sessions.find((s) => s.id === sessionId)
+      if (!session) return
+      // Find the user message that prompted this assistant reply.
+      const parentUser = message.parentId
+        ? session.messages[message.parentId]
+        : undefined
+      if (!parentUser || parentUser.role !== "user") {
+        toast("Can't regenerate this message")
+        return
       }
+      await runTurn(parentUser.content, {
+        parentMessageId: parentUser.parentId,
+        docSkillId: undefined,
+      })
     },
-    [sessionId, loadContent]
-  )
-
-  const activateBranch = React.useCallback(
-    async (branchId: string) => {
-      try {
-        await liveApi.activateBranch(sessionId, branchId)
-        useOrbit.getState().patchSession(sessionId, { activeBranchId: branchId })
-        await loadContent(sessionId)
-      } catch (error) {
-        toast.error("Couldn't switch branches", {
-          description: error instanceof Error ? error.message : undefined,
-        })
-      }
-    },
-    [sessionId, loadContent]
+    [sessionId, runTurn]
   )
 
   /**
-   * Edit a past user message: branch at its parent (the reply before it),
-   * switch to the branch, and send the edited text there. Pure composition
-   * of the existing branches + continue REST surface.
+   * Edit a past user message and resend: send the edited text under the same
+   * parent as the original, creating a new sibling branch. The previous reply
+   * stays reachable via the sibling version switcher.
    */
   const editAndBranch = React.useCallback(
     async (message: ChatMessage, newText: string) => {
       const text = newText.trim()
       if (!text) return
-      if (!message.parentId) {
-        toast("The first message can't be edited", {
-          description: "Start a new session to ask something different.",
-        })
-        return
-      }
-      try {
-        const result = await liveApi.createBranch(sessionId, message.parentId)
-        useOrbit.getState().patchSession(sessionId, {
-          activeBranchId: result.activeBranchId,
-        })
-        await loadContent(sessionId)
-        await send(text)
-        toast("Branched with your edit", {
-          description: "The previous reply is still available via the branch switcher.",
-        })
-      } catch (error) {
-        toast.error("Couldn't branch the conversation", {
-          description: error instanceof Error ? error.message : undefined,
-        })
-      }
+      await runTurn(text, { parentMessageId: message.parentId })
     },
-    [sessionId, loadContent, send]
+    [runTurn]
   )
 
   return React.useMemo(
@@ -457,11 +400,9 @@ export function useLiveChat(sessionId: string) {
       busyId,
       isBusy: busyId !== null,
       loadContent,
-      branchFrom,
-      activateBranch,
-      regenerate: branchFrom,
+      regenerate,
       editAndBranch,
     }),
-    [send, stop, busyId, loadContent, branchFrom, activateBranch, editAndBranch]
+    [send, stop, busyId, loadContent, regenerate, editAndBranch]
   )
 }

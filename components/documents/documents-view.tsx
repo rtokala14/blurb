@@ -4,7 +4,9 @@ import * as React from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import {
   ArrowUpDown,
+  ChevronRight,
   Cloud,
+  Folder,
   FolderInput,
   FolderPlus,
   FolderTree as FolderTreeIcon,
@@ -12,7 +14,6 @@ import {
   Link2,
   List,
   MessageSquarePlus,
-  RefreshCw,
   Search,
   Trash2,
   Upload,
@@ -83,10 +84,12 @@ import {
   ToggleGroup,
   ToggleGroupItem,
 } from "@/components/ui/toggle-group"
+import { folderSwatchClass } from "@/hooks/use-chat-folders"
+import { cn } from "@/lib/utils"
 import { formatSize } from "@/lib/format"
 import { TimeAgo } from "@/components/time-ago"
+import { syncMoveDoc, syncUpdateFolder } from "@/lib/live-sync"
 import { useOrbit } from "@/lib/store"
-import { useSharePointSync } from "@/lib/use-sharepoint-sync"
 import type { Doc, DocFolder } from "@/lib/types"
 
 type SortKey = "updated" | "name" | "size"
@@ -117,7 +120,6 @@ export function DocumentsView() {
   const updateDoc = useOrbit((s) => s.updateDoc)
   const removeDoc = useOrbit((s) => s.removeDoc)
   const createSession = useOrbit((s) => s.createSession)
-  const syncSite = useSharePointSync()
 
   const [currentFolderId, setCurrentFolderId] = React.useState<string | null>(null)
   const [query, setQuery] = React.useState("")
@@ -136,7 +138,6 @@ export function DocumentsView() {
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set())
   const [docWindow, setDocWindow] = React.useState(200)
   const [loadingMore, setLoadingMore] = React.useState(false)
-  const live = useOrbit((s) => s.live === true)
   const liveUserEmail = useOrbit((s) => (s.liveUserEmail ?? "").toLowerCase())
   const patchFolder = useOrbit((s) => s.patchFolder)
 
@@ -169,7 +170,10 @@ export function DocumentsView() {
 
   const bulkAddToFolder = (folderId: string) => {
     const ids = [...selectedIds]
-    ids.forEach((id) => updateDoc(id, { folderId }))
+    ids.forEach((id) => {
+      updateDoc(id, { folderId })
+      syncMoveDoc(id, folderId)
+    })
     setSelectedIds(new Set())
     const name = folders.find((f) => f.id === folderId)?.name ?? "folder"
     toast(`Added ${ids.length} ${ids.length === 1 ? "document" : "documents"} to ${name}`)
@@ -180,7 +184,7 @@ export function DocumentsView() {
     // If the store already holds more rows than we're showing, just grow the
     // render window (no fetch). Only hit the server for additional live pages
     // when we've exhausted what's loaded.
-    const needsFetch = live && !query && !currentFolderId && docs.length <= docWindow
+    const needsFetch = !query && !currentFolderId && docs.length <= docWindow
     if (!needsFetch) {
       setDocWindow(next)
       return
@@ -210,9 +214,10 @@ export function DocumentsView() {
   const currentFolder = folders.find((f) => f.id === currentFolderId)
   const site = sites.find((s) => s.mappedFolderId === currentFolderId)
 
-  /** Move a doc between folders (null = out of any folder). Local-only. */
+  /** Move a doc between folders (null = out of any folder). */
   const moveDocToFolder = (doc: Doc, folderId: string | null) => {
     updateDoc(doc.id, { folderId })
+    syncMoveDoc(doc.id, folderId)
     toast(
       folderId
         ? `Moved to ${folders.find((f) => f.id === folderId)?.name ?? "folder"}`
@@ -230,6 +235,7 @@ export function DocumentsView() {
     const creator = (target.createdBy ?? liveUserEmail).toLowerCase()
     const accessEmails = [creator, ...emails.filter((e) => e.toLowerCase() !== creator)]
     patchFolder(target.id, { accessEmails })
+    syncUpdateFolder(target.id, { accessEmails })
     toast.success("Folder sharing updated", {
       description:
         emails.length === 0
@@ -295,16 +301,76 @@ export function DocumentsView() {
     serverHits.find((d) => d.id === previewDocId) ??
     null
 
-  const breadcrumbSegments: { id: string | null; name: string }[] = [
-    { id: null, name: "Library" },
-  ]
-  if (currentFolder) {
-    if (currentFolder.parentId) {
-      const parent = folders.find((f) => f.id === currentFolder.parentId)
-      if (parent) breadcrumbSegments.push({ id: parent.id, name: parent.name })
+  /* Full ancestor chain (Library / A / B / C), cycle-guarded. */
+  const breadcrumbSegments = React.useMemo(() => {
+    const segments: { id: string | null; name: string }[] = []
+    let cursor: DocFolder | undefined = currentFolder
+    const visited = new Set<string>()
+    while (cursor && !visited.has(cursor.id)) {
+      visited.add(cursor.id)
+      segments.unshift({ id: cursor.id, name: cursor.name })
+      cursor = folders.find((f) => f.id === cursor?.parentId)
     }
-    breadcrumbSegments.push({ id: currentFolder.id, name: currentFolder.name })
-  }
+    return [{ id: null as string | null, name: "Library" }, ...segments]
+  }, [currentFolder, folders])
+
+  /* Direct child folders of the current view — rendered as tiles in the
+     content pane so nesting is navigable from the main area, not just the
+     side tree. */
+  const childFolders = React.useMemo(
+    () =>
+      folders
+        .filter(
+          (f) =>
+            f.source !== "sharepoint" &&
+            (f.parentId ?? null) === currentFolderId
+        )
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [folders, currentFolderId]
+  )
+  const directDocCount = React.useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const d of docs) {
+      if (!d.folderId) continue
+      counts.set(d.folderId, (counts.get(d.folderId) ?? 0) + 1)
+    }
+    return counts
+  }, [docs])
+
+  /* "A / B / C" path labels so flat folder menus stay unambiguous with
+     nesting; sorted so parents come right before their children. */
+  const folderPaths = React.useMemo(() => {
+    const byId = new Map(folders.map((f) => [f.id, f]))
+    const paths = new Map<string, string>()
+    const pathOf = (folder: DocFolder): string => {
+      const cached = paths.get(folder.id)
+      if (cached) return cached
+      const names: string[] = []
+      let cursor: DocFolder | undefined = folder
+      const visited = new Set<string>()
+      while (cursor && !visited.has(cursor.id)) {
+        visited.add(cursor.id)
+        names.unshift(cursor.name)
+        cursor = cursor.parentId ? byId.get(cursor.parentId) : undefined
+      }
+      const path = names.join(" / ")
+      paths.set(folder.id, path)
+      return path
+    }
+    for (const f of folders) pathOf(f)
+    return paths
+  }, [folders])
+  const uploadFoldersByPath = React.useMemo(
+    () =>
+      folders
+        .filter((f) => f.source === "upload")
+        .sort((a, b) =>
+          (folderPaths.get(a.id) ?? a.name).localeCompare(
+            folderPaths.get(b.id) ?? b.name
+          )
+        ),
+    [folders, folderPaths]
+  )
 
   const askInChat = (doc: Doc) => {
     // Server-search hits aren't in the store yet — adopt before scoping.
@@ -338,14 +404,14 @@ export function DocumentsView() {
                 Library (no folder)
               </ContextMenuItem>
             )}
-            {folders.flatMap((f) =>
-              f.source === "upload" && f.id !== doc.folderId
+            {uploadFoldersByPath.flatMap((f) =>
+              f.id !== doc.folderId
                 ? [
                     <ContextMenuItem
                       key={f.id}
                       onClick={() => void moveDocToFolder(doc, f.id)}
                     >
-                      {f.name}
+                      {folderPaths.get(f.id) ?? f.name}
                     </ContextMenuItem>,
                   ]
                 : []
@@ -524,32 +590,15 @@ export function DocumentsView() {
               Last synced <TimeAgo iso={site.lastSyncedAt} />
             </span>
             {site.attentionCount > 0 && (
-              <Badge variant="destructive" className="tabular-nums">
+              <Badge variant="destructive" className="ml-auto tabular-nums">
                 {site.attentionCount} conflicts
               </Badge>
             )}
-            <Button
-              variant="outline"
-              size="sm"
-              className="ml-auto"
-              disabled={site.state === "syncing"}
-              onClick={() => syncSite(site.id)}
-            >
-              {site.state === "syncing" ? (
-                <>
-                  <Spinner /> Syncing…
-                </>
-              ) : (
-                <>
-                  <RefreshCw /> Sync now
-                </>
-              )}
-            </Button>
           </div>
         )}
 
         {/* Content */}
-        {live && selectedIds.size > 0 && (
+        {selectedIds.size > 0 && (
           <div className="bg-muted/60 flex items-center gap-2 border-b px-4 py-2 text-sm">
             <span className="font-medium tabular-nums">
               {selectedIds.size} selected
@@ -561,18 +610,14 @@ export function DocumentsView() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start">
-                {folders.flatMap((f) =>
-                  f.source !== "sharepoint"
-                    ? [
-                        <DropdownMenuItem
-                          key={f.id}
-                          onClick={() => void bulkAddToFolder(f.id)}
-                        >
-                          {f.name}
-                        </DropdownMenuItem>,
-                      ]
-                    : []
-                )}
+                {uploadFoldersByPath.map((f) => (
+                  <DropdownMenuItem
+                    key={f.id}
+                    onClick={() => void bulkAddToFolder(f.id)}
+                  >
+                    {folderPaths.get(f.id) ?? f.name}
+                  </DropdownMenuItem>
+                ))}
               </DropdownMenuContent>
             </DropdownMenu>
             <Button
@@ -594,6 +639,36 @@ export function DocumentsView() {
           </div>
         )}
         <div className="min-h-0 flex-1 overflow-y-auto">
+          {/* Subfolders of the current view — navigable from the main pane. */}
+          {!query && childFolders.length > 0 && (
+            <div className="grid grid-cols-1 gap-2 border-b p-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {childFolders.map((f) => (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => setCurrentFolderId(f.id)}
+                  className="group/folder hover:bg-accent flex cursor-pointer items-center gap-2.5 rounded-lg border px-3 py-2.5 text-left text-sm"
+                >
+                  <span className="relative shrink-0">
+                    <Folder className="text-muted-foreground size-4" />
+                    <span
+                      className={cn(
+                        "absolute -right-0.5 -bottom-0.5 size-2 rounded-full",
+                        folderSwatchClass(f.color)
+                      )}
+                    />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate font-medium">
+                    {f.name}
+                  </span>
+                  <span className="text-muted-foreground text-xs tabular-nums">
+                    {directDocCount.get(f.id) ?? 0}
+                  </span>
+                  <ChevronRight className="text-muted-foreground size-3.5 opacity-0 transition-opacity group-hover/folder:opacity-100" />
+                </button>
+              ))}
+            </div>
+          )}
           {visible.length === 0 ? (
             <Empty className="h-full">
               <EmptyHeader>
@@ -608,7 +683,9 @@ export function DocumentsView() {
                     ? "Checking all documents on Foundry."
                     : query
                       ? `Nothing matches “${query}” in this folder.`
-                      : "This folder is empty. Upload files or sync a SharePoint site."}
+                      : childFolders.length > 0
+                        ? "No documents here yet — browse a subfolder above or upload files."
+                        : "This folder is empty. Upload files to get started."}
                 </EmptyDescription>
               </EmptyHeader>
               <Button onClick={() => setUploadOpen(true)}>
@@ -619,26 +696,24 @@ export function DocumentsView() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  {live && (
-                    <TableHead className="w-8">
-                      <Checkbox
-                        aria-label="Select all visible"
-                        checked={
-                          visible.length > 0 &&
-                            visible.every((d) => selectedIds.has(d.id))
-                            ? true
-                            : selectedIds.size > 0
-                              ? "indeterminate"
-                              : false
-                        }
-                        onCheckedChange={(v) =>
-                          setSelectedIds(
-                            v === true ? new Set(visible.map((d) => d.id)) : new Set()
-                          )
-                        }
-                      />
-                    </TableHead>
-                  )}
+                  <TableHead className="w-8">
+                    <Checkbox
+                      aria-label="Select all visible"
+                      checked={
+                        visible.length > 0 &&
+                          visible.every((d) => selectedIds.has(d.id))
+                          ? true
+                          : selectedIds.size > 0
+                            ? "indeterminate"
+                            : false
+                      }
+                      onCheckedChange={(v) =>
+                        setSelectedIds(
+                          v === true ? new Set(visible.map((d) => d.id)) : new Set()
+                        )
+                      }
+                    />
+                  </TableHead>
                   <TableHead>Name</TableHead>
                   <TableHead className="w-36">Status</TableHead>
                   <TableHead className="hidden w-36 lg:table-cell">Owner</TableHead>
@@ -654,15 +729,13 @@ export function DocumentsView() {
                         className="cursor-pointer"
                         onClick={() => setPreviewDocId(doc.id)}
                       >
-                        {live && (
-                          <TableCell onClick={(e) => e.stopPropagation()}>
-                            <Checkbox
-                              aria-label={`Select ${doc.name}`}
-                              checked={selectedIds.has(doc.id)}
-                              onCheckedChange={() => toggleSelected(doc.id)}
-                            />
-                          </TableCell>
-                        )}
+                        <TableCell onClick={(e) => e.stopPropagation()}>
+                          <Checkbox
+                            aria-label={`Select ${doc.name}`}
+                            checked={selectedIds.has(doc.id)}
+                            onCheckedChange={() => toggleSelected(doc.id)}
+                          />
+                        </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2.5">
                             <DocIcon type={doc.type} />
@@ -727,10 +800,10 @@ export function DocumentsView() {
               ))}
             </div>
           )}
-          {/* Show when more rows can be revealed locally, or (live root view)
+          {/* Show when more rows can be revealed locally, or (root view)
               when the server may hold further pages. */}
           {(rendered.length < visible.length ||
-            (live && !query && !currentFolderId && docs.length <= docWindow)) && (
+            (!query && !currentFolderId && docs.length <= docWindow)) && (
               <div className="flex justify-center p-4">
                 <Button variant="outline" size="sm" disabled={loadingMore} onClick={loadMore}>
                   {loadingMore ? "Loading…" : "Load more documents"}

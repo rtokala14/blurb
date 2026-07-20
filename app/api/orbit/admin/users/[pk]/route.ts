@@ -1,19 +1,19 @@
-import { applyAction, getObject } from "@/lib/foundry/client"
 import { serializeAdminUser, usageTodayByEmail } from "@/lib/foundry/admin"
-import { normalizeEmail } from "@/lib/foundry/ontology"
+import { listGrantsForUser, normalizeEmail } from "@/lib/foundry/ontology"
 import { errorResponse, json, requireLive } from "@/lib/foundry/http"
 import {
-  invalidateUserCache,
+  getProvisionedUser,
+  listAllUsers,
   requireAdminUser,
-  type OrbitUserRow,
+  updateUserRow,
 } from "@/lib/foundry/user"
 
 export const dynamic = "force-dynamic"
 
 /**
- * Update a user's flags and rate limits (PoC PUT /api/admin/users/{email}).
- * The edit action is a full replay, so unspecified fields keep their
- * current values.
+ * Update a user's flags and rate limit (PUT /api/admin/users/{email}). The
+ * edit action is a full replay, so unspecified fields keep their current
+ * values.
  */
 export async function PUT(
   request: Request,
@@ -24,71 +24,56 @@ export async function PUT(
   try {
     const admin = await requireAdminUser(request)
     const { pk } = await params
-    const user = await getObject<OrbitUserRow>("OrbitDocsUser", pk)
+    const targetEmail = normalizeEmail(pk)
+    let user = await getProvisionedUser(targetEmail)
+    if (!user) {
+      const all = await listAllUsers()
+      user = all.find((u) => normalizeEmail(u.email) === targetEmail) ?? null
+    }
     if (!user) return json({ error: "User not found" }, { status: 404 })
 
     const body = (await request.json()) as Partial<{
       name: string
-      isAdmin: boolean
-      isActive: boolean
-      hasUnlimitedUploads: boolean
+      role: "user" | "admin"
+      isOnboarded: boolean
+      isAllowedToUpload: boolean
       dailyUploadLimit: number
-      bonusUploadLimit: number
-      bonusExpiresAt: string | null
-      bonusReason: string | null
     }>
 
-    // Guardrail: an admin can't strip their own admin flag or deactivate
-    // themselves — prevents locking everyone out.
+    // Guardrail: an admin can't demote themselves — prevents locking everyone
+    // out.
     const isSelf = normalizeEmail(user.email) === admin.email
-    if (isSelf && (body.isAdmin === false || body.isActive === false)) {
+    if (isSelf && body.role !== undefined && body.role !== "admin") {
       return json(
-        { error: "You can't remove your own admin access or deactivate yourself" },
+        { error: "You can't remove your own admin access" },
         { status: 422 }
       )
     }
 
-    const timestamp = new Date().toISOString()
-    const touchesBonus =
-      body.bonusUploadLimit !== undefined ||
-      body.bonusExpiresAt !== undefined ||
-      body.bonusReason !== undefined
-    await applyAction("edit-orbit-docs-user", {
-      OrbitDocsUser: pk,
-      name: body.name ?? user.name ?? "",
-      isAdmin: body.isAdmin ?? Boolean(user.isAdmin),
-      isActive: body.isActive ?? user.isActive !== false,
-      featureFlags: user.featureFlags ?? [],
-      hasUnlimitedUploads: body.hasUnlimitedUploads ?? Boolean(user.hasUnlimitedUploads),
-      dailyUploadLimit: body.dailyUploadLimit ?? Number(user.dailyUploadLimit ?? 0),
-      bonusUploadLimit: body.bonusUploadLimit ?? Number(user.bonusUploadLimit ?? 0),
-      bonusExpiresAt:
-        body.bonusExpiresAt !== undefined
-          ? (body.bonusExpiresAt ?? undefined)
-          : user.bonusExpiresAt,
-      bonusReason:
-        body.bonusReason !== undefined
-          ? (body.bonusReason ?? undefined)
-          : user.bonusReason,
-      ...(touchesBonus
-        ? { bonusUpdatedAt: timestamp, bonusUpdatedBy: admin.email }
-        : {}),
-      updatedAt: timestamp,
-    })
-    invalidateUserCache(user.email)
+    const fields: Parameters<typeof updateUserRow>[1] = {}
+    if (body.name !== undefined) fields.name = body.name
+    if (body.role !== undefined) fields.role = body.role
+    if (body.isOnboarded !== undefined) fields.isOnboarded = body.isOnboarded
+    if (body.isAllowedToUpload !== undefined) {
+      fields.isAllowedToUpload = body.isAllowedToUpload
+    }
+    if (body.dailyUploadLimit !== undefined) {
+      fields.dailyUploadLimit = body.dailyUploadLimit
+    }
+    await updateUserRow(user, fields)
 
-    const [updated, usage] = await Promise.all([
-      getObject<OrbitUserRow>("OrbitDocsUser", pk),
+    const [fresh, usage, grants] = await Promise.all([
+      getProvisionedUser(targetEmail),
       usageTodayByEmail(),
+      listGrantsForUser(targetEmail),
     ])
+    const row = fresh ?? user
     return json({
       success: true,
-      data: updated
-        ? serializeAdminUser(
-            updated,
-            usage.get(normalizeEmail(updated.email)) ?? 0
-          )
-        : null,
+      data: serializeAdminUser(row, {
+        usageToday: usage.get(targetEmail) ?? 0,
+        grants,
+      }),
     })
   } catch (error) {
     return errorResponse(error)

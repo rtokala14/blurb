@@ -120,51 +120,31 @@ export function EmailDialog({
     return () => pending.forEach((t) => clearTimeout(t as ReturnType<typeof setTimeout>))
   }, [])
 
-  /**
-   * Re-draft with current tone/length. Live mode routes through the real
-   * Foundry refining agent; demo mode keeps the local template with a
-   * simulated stream.
-   */
+  /** Re-draft with current tone/length via the Foundry refining agent. */
   const refine = async () => {
     setRefining(true)
-    if (useOrbit.getState().live === true) {
-      try {
-        const { text } = await liveApi.refine({
-          // Email refining doesn't need doc grounding/citations — route it
-          // through the fast, model-flexible LLM proxy instead of the AIP query.
-          engine: "llm-proxy",
-          userInput: message.content,
-          toRefine: body || draftEmail(message, session, tone, length, citedDocNames),
-          refineRequest:
-            `Rewrite this as a ${tone} business email that is ` +
-            (length === "brief"
-              ? "brief — two short paragraphs at most."
-              : "appropriately detailed.") +
-            " Keep any citation markers like [1] intact and end with a professional sign-off. Return only the email body.",
-        })
-        if (text?.trim()) setBody(text.trim())
-      } catch (error) {
-        toast.error("Couldn't refine the draft", {
-          description: error instanceof Error ? error.message : undefined,
-        })
-      } finally {
-        setRefining(false)
-      }
-      return
+    try {
+      const { text } = await liveApi.refine({
+        // Email refining doesn't need doc grounding/citations — route it
+        // through the fast, model-flexible LLM proxy instead of the AIP query.
+        engine: "llm-proxy",
+        userInput: message.content,
+        toRefine: body || draftEmail(message, session, tone, length, citedDocNames),
+        refineRequest:
+          `Rewrite this as a ${tone} business email that is ` +
+          (length === "brief"
+            ? "brief — two short paragraphs at most."
+            : "appropriately detailed.") +
+          " Keep any citation markers like [1] intact and end with a professional sign-off. Return only the email body.",
+      })
+      if (text?.trim()) setBody(text.trim())
+    } catch (error) {
+      toast.error("Couldn't refine the draft", {
+        description: error instanceof Error ? error.message : undefined,
+      })
+    } finally {
+      setRefining(false)
     }
-    const target = draftEmail(message, session, tone, length, citedDocNames)
-    setBody("")
-    const tokens = target.match(/\S+\s*/g) ?? []
-    let cursor = 0
-    const interval = setInterval(() => {
-      cursor = Math.min(tokens.length, cursor + 4)
-      setBody(tokens.slice(0, cursor).join(""))
-      if (cursor >= tokens.length) {
-        clearInterval(interval)
-        setRefining(false)
-      }
-    }, 24)
-    timers.current.push(interval)
   }
 
   /**

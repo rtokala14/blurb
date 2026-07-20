@@ -5,886 +5,954 @@ import {
   extractCreatedPrimaryKey,
   getObject,
   getObjectsByIds,
-  IN_FILTER_CHUNK,
   searchObjects,
-  searchObjectsPage,
+  type MediaReference,
+  type WhereClause,
 } from "./client"
 import { getFoundryConfig } from "./config"
-import { normalizeMode } from "./turn"
 
 /**
- * Ontology-backed data layer mirroring the PoC backend semantics
- * (user scoping, soft deletes checked in JS because `isDeleted` is nullable,
- * attachment preservation on partial session edits).
+ * v3 ontology data layer (Orbit Docs v3 pipeline).
+ *
+ * Object types: OrbitDocsUserV2, OrbitDocsFolderRegistry, OrbitDocsDocMeta,
+ * OrbitDocsChunks, OrbitDocsEntitiesCanonical, OrbitDocsRelationships,
+ * OrbitDocsChatSessions, OrbitDocsChatMessages, OrbitDocsRateLimitGrants.
+ *
+ * Conventions (verified live):
+ *  - All create actions generate the primary key server-side; extract it from
+ *    apply-with-returnEdits responses.
+ *  - Edit actions are full-replay: every parameter is rewritten, and the
+ *    object-reference parameter is named like the object type.
+ *  - Messages form a tree via parentMessageId; the session's
+ *    activeLeafMessageId is the cursor. Branching = new sibling + repoint.
+ *  - Session-level app state (scope, chat folder, agent session RID, run
+ *    status) lives in the session's free-form `options` JSON.
  */
 
-/* ------------------------------------------------------------------ */
-/* Row types (REST camelCase property names, verified against openapi)  */
-/* ------------------------------------------------------------------ */
+export const ROOT_FOLDER_ID = "folder-root"
 
-export interface DocRow {
-  __primaryKey: string
-  primaryKey_?: string
-  documentName?: string
-  addedBy?: string
-  isActive?: boolean
-  isIndexed?: boolean
-  createdAt?: string
-  noPages?: number
-  reference?: { mimeType?: string; reference?: unknown } | unknown
-  sourceType?: string
-  sourceSyncConfigPk?: string
-  sourceRelativePath?: string
-  sourceWebUrl?: string
-  syncStatus?: string
-  vlm?: boolean
-}
-
-export interface IndexStatusRow {
-  __primaryKey: string
-  docKey?: string
-  isIndexingComplete?: boolean
-  embeddingCount?: number
-  lastUpdated?: string
-  noPages?: number
-}
+/* ------------------------------------------------------------------ */
+/* Row shapes (REST camelCase)                                          */
+/* ------------------------------------------------------------------ */
 
 export interface FolderRow {
-  __primaryKey: string
+  __primaryKey?: string
+  folderId?: string
   name?: string
-  color?: string
-  createdBy?: string
-  accessEmails?: string[]
-  contents?: string[]
-  updatedAt?: string
-  isSyncManaged?: boolean
-  sourceSyncConfigPk?: string
+  parentFolderId?: string
+  ownerUserId?: string
+  allowedUserIds?: string[] | null
+  createdTs?: string
+}
+
+export interface DocRow {
+  __primaryKey?: string
+  documentId?: string
+  fileName?: string
+  mime?: string
+  mediaPath?: string
+  mediaItemRid?: string
+  mediaReference?: MediaReference
+  parentFolderId?: string
+  status?: string
+  uploadTs?: string
+  userEmail?: string
+  allowedUserIds?: string[] | null
 }
 
 export interface SessionRow {
-  __primaryKey: string
-  user?: string
+  __primaryKey?: string
+  sessionId?: string
+  userEmail?: string
   title?: string
-  mode?: string
   summary?: string
+  options?: string
   createdAt?: string
-  updatedAt?: string
-  isDeleted?: boolean
-  docsAttached?: string[]
-  foldersAttached?: string[]
-  chatFolderId?: string
-  activeBranchId?: string
-  defaultBranchId?: string
-  currentRunStatus?: string
-  currentRunError?: string
-  currentAgentRid?: string
-  currentAgentVersion?: string
-  currentSessionId?: string
-  currentMessageId?: string
-  currentSessionTraceId?: string
+  lastUpdatedAt?: string
+  isDeleted?: boolean | null
+  activeLeafMessageId?: string
 }
 
 export interface MessageRow {
-  __primaryKey: string
+  __primaryKey?: string
+  messageId?: string
   sessionId?: string
-  message?: string
-  isAgent?: boolean
-  title?: string
-  mode?: string
-  createdAt?: string
+  role?: string
+  content?: string
+  citations?: string
+  scope?: string
+  model?: string
   parentMessageId?: string
-  branchId?: string
-  branchIndex?: number
-  hasAlternateBranches?: boolean
-  alternateBranchCount?: number
+  createdAt?: string
+  isDeleted?: boolean | null
 }
 
-export interface BranchRow {
-  __primaryKey: string
-  sessionId?: string
-  name?: string
-  isDefault?: boolean
-  isDeleted?: boolean
-  anchorMessageId?: string
-  headMessageId?: string
-  summary?: string
+export interface GrantRow {
+  __primaryKey?: string
+  grantId?: string
+  userEmail?: string
+  bonusUploads?: string | number
+  validFrom?: string
+  validUntil?: string
+  reason?: string
   createdBy?: string
   createdAt?: string
-  updatedAt?: string
-  deletedAt?: string
 }
 
-export interface ChatFolderRow {
-  __primaryKey: string
-  primaryKey_?: string
-  name?: string
-  color?: string
-  createdBy?: string
-  updatedAt?: string
-  isDeleted?: boolean
-  deletedAt?: string
+export interface EntityRow {
+  __primaryKey?: string
+  entityId?: string
+  documentId?: string
+  canonicalName?: string
+  type?: string
+  mentionCount?: string | number
+  chunkIds?: string[] | null
+  userEmail?: string
 }
 
-export interface SyncSourceRow {
-  __primaryKey: string
-  displayName?: string
-  localRootPath?: string
-  isActive?: boolean
-  lastSyncStatus?: string
-  lastSyncCompletedAt?: string
-  errorCount?: number
-  sourceWebUrl?: string
-  ownerEmail?: string
-  sharedWith?: string[]
+export interface RelationshipRow {
+  __primaryKey?: string
+  relId?: string
+  documentId?: string
+  subjectEntityId?: string
+  objectEntityId?: string
+  predicate?: string
+  weight?: string | number
+  sourceChunkIds?: string[] | null
 }
 
-export const pk = (row: { __primaryKey?: unknown; primaryKey_?: unknown }) =>
-  String(row.primaryKey_ ?? row.__primaryKey ?? "")
-
-export const normalizeEmail = (value: string | null | undefined) =>
-  (value ?? "").trim().toLowerCase()
-
-/** Case-insensitive email equality — use for EVERY email comparison. */
-export const sameEmail = (
-  a: string | null | undefined,
-  b: string | null | undefined
-) => normalizeEmail(a) !== "" && normalizeEmail(a) === normalizeEmail(b)
-
-/**
- * Case-insensitive upstream email filter. Plain `eq` is case-sensitive and
- * the tenant holds mixed-case rows (e.g. "Rohit.Tokala@jacobs.com" beside
- * "rohit.tokala@…" — verified live: eq-lower missed 30 docs / 6 sessions /
- * 2 folders). The search index lowercases terms, so `containsAllTerms`
- * matches any casing exactly; callers MUST still JS-verify rows with
- * sameEmail() because a token permutation could over-match in theory.
- */
-export const emailWhere = (field: string, email: string) =>
-  ({
-    type: "containsAllTerms",
-    field,
-    value: normalizeEmail(email),
-  }) as const
-
-const now = () => new Date().toISOString()
-
-function byCreatedAt<T extends { createdAt?: string; __primaryKey: string }>(
-  a: T,
-  b: T
-) {
-  const ta = a.createdAt ?? ""
-  const tb = b.createdAt ?? ""
-  if (ta !== tb) return ta < tb ? -1 : 1
-  return pk(a) < pk(b) ? -1 : 1
+export interface ChunkRow {
+  __primaryKey?: string
+  chunkId?: string
+  documentId?: string
+  chunkContent?: string
+  chunkMetadata?: string
+  fileName?: string
+  mediaItemRid?: string
 }
 
 /* ------------------------------------------------------------------ */
-/* Documents & folders                                                  */
+/* Helpers                                                              */
 /* ------------------------------------------------------------------ */
 
-/**
- * Tiny single-flight TTL cache. Collapses the paired /bootstrap + /docs +
- * /docs/status bursts (which all touch the same two full-scans) into one
- * upstream query each — the dominant latency win, mirroring the PoC's 5s
- * in-process caches.
- *
- * With `staleMs` set it also serves stale-while-revalidate: a value older
- * than ttlMs but younger than staleMs is returned immediately while a
- * background refresh runs, so idle-expired requests skip the upstream wait.
- */
-function memoTTL<T>(
-  ttlMs: number,
-  load: () => Promise<T>,
-  { staleMs = 0 }: { staleMs?: number } = {}
-) {
-  let value: { at: number; data: T } | null = null
-  let inFlight: Promise<T> | null = null
-  const refresh = () => {
-    if (inFlight) return inFlight
-    inFlight = load()
-      .then((data) => {
-        value = { at: Date.now(), data }
-        return data
-      })
-      .finally(() => {
-        inFlight = null
-      })
-    return inFlight
-  }
-  const fn = async (): Promise<T> => {
-    const age = value ? Date.now() - value.at : Infinity
-    if (value && age < ttlMs) return value.data
-    if (value && age < staleMs) {
-      void refresh().catch(() => undefined)
-      return value.data
-    }
-    return refresh()
-  }
-  fn.invalidate = () => {
-    value = null
-  }
-  return fn
+export function pk(row: {
+  __primaryKey?: unknown
+  folderId?: unknown
+  documentId?: unknown
+  sessionId?: unknown
+  messageId?: unknown
+  grantId?: unknown
+}): string {
+  return String(
+    row.__primaryKey ??
+      row.folderId ??
+      row.documentId ??
+      row.sessionId ??
+      row.messageId ??
+      row.grantId ??
+      ""
+  )
 }
 
-const CACHE_TTL_MS = 5_000
-/** Folder membership changes rarely; serve stale up to 10 min while refreshing. */
-const FOLDER_STALE_MS = 10 * 60_000
+export function normalizeEmail(value: string | undefined | null): string {
+  return (value ?? "").trim().toLowerCase()
+}
 
-const folderCacheByUser = new Map<
-  string,
-  ReturnType<typeof memoTTL<FolderRow[]>>
->()
+export function sameEmail(a?: string | null, b?: string | null): boolean {
+  const na = normalizeEmail(a)
+  const nb = normalizeEmail(b)
+  return na !== "" && na === nb
+}
 
-/** Bust folder caches after any folder mutation. */
+/**
+ * Email equality filter. The search index lowercases terms, so
+ * containsAllTerms matches regardless of stored casing — callers MUST
+ * re-verify with sameEmail (over-match is possible on multi-term emails).
+ */
+export function emailWhere(field: string, email: string): WhereClause {
+  return { type: "containsAllTerms", field, value: normalizeEmail(email) }
+}
+
+export function foundryUserEmail(): string {
+  return getFoundryConfig().userEmail
+}
+
+function nowIso(): string {
+  return new Date().toISOString()
+}
+
+/** Read a row's free-form options JSON (never throws). */
+export function parseOptions<T = Record<string, unknown>>(
+  raw: string | undefined | null
+): T {
+  if (!raw) return {} as T
+  try {
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === "object" ? (parsed as T) : ({} as T)
+  } catch {
+    return {} as T
+  }
+}
+
+/** Session-level app state kept in ChatSessions.options JSON. */
+export interface SessionOptions {
+  docsAttached?: string[]
+  foldersAttached?: string[]
+  chatFolderId?: string | null
+  /** AIP session RID returned by the main-agent query, for continuity */
+  agentSessionRid?: string
+  currentRun?: {
+    status?: "idle" | "in_progress" | "failed"
+    error?: string
+    messageId?: string
+    startedAt?: string
+  }
+}
+
+export function sessionOptions(row: SessionRow): SessionOptions {
+  return parseOptions<SessionOptions>(row.options)
+}
+
+/* ------------------------------------------------------------------ */
+/* Folders (first-party nested tree)                                    */
+/* ------------------------------------------------------------------ */
+
+const FOLDER_CACHE_TTL_MS = 5_000
+let folderCache: { email: string; rows: FolderRow[]; at: number } | null = null
+
 export function invalidateFolderCache(): void {
-  for (const loader of folderCacheByUser.values()) loader.invalidate()
+  folderCache = null
 }
 
-export async function getAccessibleFolders(userEmail: string): Promise<FolderRow[]> {
-  const user = normalizeEmail(userEmail)
-  let loader = folderCacheByUser.get(user)
-  if (!loader) {
-    loader = memoTTL(CACHE_TTL_MS, async () => {
-      // One small query instead of two 10k-row scans: sync-managed folders
-      // are excluded upstream — verified live that they carry NO contents
-      // (500-row sample: 0 non-empty), so membership, access checks, and
-      // the UI lose nothing, while the cold path drops from ~8,800 full
-      // folder payloads to a handful of user folders.
-      const rows = await searchObjects<FolderRow>("OrbitFolders", {
-        where: {
-          type: "and",
-          value: [
-            {
-              type: "or",
-              value: [
-                // case-insensitive (term match); over-matches rejected below
-                emailWhere("createdBy", user),
-                { type: "contains", field: "accessEmails", value: user },
-              ],
-            },
-            { type: "not", value: { type: "eq", field: "isSyncManaged", value: true } },
-          ],
-        },
-        pageSize: 1000,
-      })
-      return rows.filter(
-        (f) =>
-          sameEmail(f.createdBy, user) ||
-          (f.accessEmails ?? []).some((e) => sameEmail(e, user))
-      )
-    }, { staleMs: FOLDER_STALE_MS })
-    folderCacheByUser.set(user, loader)
+/** Folders the user owns or is shared into (allowedUserIds). */
+export async function getAccessibleFolders(
+  userEmail: string
+): Promise<FolderRow[]> {
+  const email = normalizeEmail(userEmail)
+  if (
+    folderCache &&
+    folderCache.email === email &&
+    Date.now() - folderCache.at < FOLDER_CACHE_TTL_MS
+  ) {
+    return folderCache.rows
   }
-  return loader()
-}
-
-const INDEX_STATUS_FIELDS = [
-  "docKey",
-  "isIndexingComplete",
-  "embeddingCount",
-  "lastUpdated",
-  "noPages",
-]
-
-/** doc pk -> {fetchedAt, row|null}; null caches "no status row exists". */
-const indexStatusByDoc = new Map<
-  string,
-  { at: number; row: IndexStatusRow | null }
->()
-/** doc pk -> in-flight batch fetch covering it (collapses request bursts). */
-const indexStatusInFlight = new Map<string, Promise<void>>()
-
-/**
- * Index status for a specific set of documents via chunked `in` filters on
- * docKey (verified live: 100 keys ≈ 220 ms). Replaces the PoC's full-table
- * scan, which on the real tenant is ~21k rows / multiple seconds. Rows are
- * cached per doc for CACHE_TTL_MS so the bootstrap + docs + status-poll
- * burst still collapses into one upstream query per doc set.
- */
-export async function getIndexStatusForDocs(
-  docIds: string[]
-): Promise<Map<string, IndexStatusRow>> {
-  const unique = [
-    ...new Set(
-      docIds.flatMap((id) => {
-        const s = String(id)
-        return s ? [s] : []
-      })
-    ),
-  ]
-  const now = Date.now()
-  const missing: string[] = []
-  const waits: Promise<void>[] = []
-  for (const id of unique) {
-    const cached = indexStatusByDoc.get(id)
-    if (cached && now - cached.at < CACHE_TTL_MS) continue
-    const inFlight = indexStatusInFlight.get(id)
-    if (inFlight) waits.push(inFlight)
-    else missing.push(id)
-  }
-
-  if (missing.length > 0) {
-    const chunks: string[][] = []
-    for (let i = 0; i < missing.length; i += IN_FILTER_CHUNK) {
-      chunks.push(missing.slice(i, i + IN_FILTER_CHUNK))
-    }
-    const fetchAll = (async () => {
-      const pages = await Promise.all(
-        chunks.map((chunk) =>
-          searchObjects<IndexStatusRow>("OrbitDocIndexStatus", {
-            where: { type: "in", field: "docKey", value: chunk },
-            select: INDEX_STATUS_FIELDS,
-          })
-        )
-      )
-      const at = Date.now()
-      const found = new Set<string>()
-      for (const row of pages.flat()) {
-        if (!row.docKey) continue
-        const key = String(row.docKey)
-        indexStatusByDoc.set(key, { at, row })
-        found.add(key)
-      }
-      for (const id of missing) {
-        if (!found.has(id)) indexStatusByDoc.set(id, { at, row: null })
-      }
-    })().finally(() => {
-      for (const id of missing) indexStatusInFlight.delete(id)
-    })
-    for (const id of missing) indexStatusInFlight.set(id, fetchAll)
-    waits.push(fetchAll)
-  }
-
-  await Promise.all(waits)
-  const result = new Map<string, IndexStatusRow>()
-  for (const id of unique) {
-    const row = indexStatusByDoc.get(id)?.row
-    if (row) result.set(id, row)
-  }
-  return result
-}
-
-export interface ListDocsResult {
-  docs: DocRow[]
-  /** doc pk -> folder names it is shared through */
-  sharedFolderNames: Map<string, string[]>
-  folders: FolderRow[]
-  indexStatus: Map<string, IndexStatusRow>
-}
-
-/** Columns serializeDoc needs — projected so the 19k-row doc table never
- * ships unused properties. */
-const DOC_LIST_FIELDS = [
-  "primaryKey_",
-  "documentName",
-  "addedBy",
-  "isActive",
-  "isIndexed",
-  "createdAt",
-  "noPages",
-  "reference",
-  "sourceType",
-  "sourceSyncConfigPk",
-  "sourceWebUrl",
-  "vlm",
-]
-
-/** PoC /api/docs default response cap. */
-const DOC_LIST_LIMIT = 200
-/** Ceiling on docs pulled in via user-folder contents (defensive bound). */
-const FOLDER_DOCS_CAP = 2_000
-
-/** Map doc pk -> names of the (non-sync-managed) folders containing it. */
-function folderMembership(folders: FolderRow[]): {
-  sharedFolderNames: Map<string, string[]>
-  folderDocIds: Set<string>
-} {
-  const sharedFolderNames = new Map<string, string[]>()
-  const folderDocIds = new Set<string>()
-  // Sync-managed folders keep docs *accessible* but their membership is
-  // organizational noise (and their contents can be enormous) — only real
-  // user folders drive Library grouping and eager fetching.
-  for (const folder of folders.filter((f) => !f.isSyncManaged)) {
-    for (const docId of folder.contents ?? []) {
-      const id = String(docId)
-      folderDocIds.add(id)
-      const names = sharedFolderNames.get(id) ?? []
-      names.push(folder.name ?? "Folder")
-      sharedFolderNames.set(id, names)
-    }
-  }
-  return { sharedFolderNames, folderDocIds }
-}
-
-/**
- * Owned docs + docs shared via accessible folders (PoC /api/docs).
- *
- * The PoC full-scans the doc table and slices to `limit` after sorting;
- * against the real tenant (~19k active docs for one user) that is dozens of
- * pages per request. We push the sort + cap upstream instead: one
- * `orderBy createdAt desc` page of `limit` rows (verified live).
- *
- * The `limit` applies to the rolling window of RAW documents (outside user
- * folders). Every document inside an accessible user folder is always
- * fetched and returned (bounded by FOLDER_DOCS_CAP), so folders are never
- * empty just because their files are older than the window.
- */
-export async function listAccessibleDocs(
-  userEmail: string,
-  {
-    includeSynced = true,
-    limit = DOC_LIST_LIMIT,
-  }: { includeSynced?: boolean; limit?: number } = {}
-): Promise<ListDocsResult> {
-  const user = normalizeEmail(userEmail)
-  const foldersPromise = getAccessibleFolders(user)
-  const ownedPage = await searchObjectsPage<DocRow>("OrbitDocsList", {
+  const rows = await searchObjects<FolderRow>("OrbitDocsFolderRegistry", {
     where: {
-      type: "and",
+      type: "or",
       value: [
-        // case-insensitive (term match); over-matches rejected below
-        emailWhere("addedBy", user),
-        { type: "eq", field: "isActive", value: true },
+        emailWhere("ownerUserId", email),
+        { type: "contains", field: "allowedUserIds", value: email },
       ],
     },
-    orderBy: { fields: [{ field: "createdAt", direction: "desc" }] },
-    select: DOC_LIST_FIELDS,
-    pageSize: limit,
+    pageSize: 1000,
   })
-  const ownedDocs = ownedPage.data.filter((d) => sameEmail(d.addedBy, user))
-  // Warm the per-doc status cache while the (slower) folder scan finishes —
-  // the final getIndexStatusForDocs below then only fetches folder-shared
-  // stragglers.
-  const ownedStatusWarm = getIndexStatusForDocs(ownedDocs.map(pk)).catch(
-    () => undefined
+  const accessible = rows.filter(
+    (row) =>
+      sameEmail(row.ownerUserId, email) ||
+      (row.allowedUserIds ?? []).some((entry) => sameEmail(entry, email))
   )
-  const folders = await foldersPromise
-  const { sharedFolderNames, folderDocIds } = folderMembership(folders)
-
-  const docsById = new Map<string, DocRow>()
-  for (const doc of ownedDocs) docsById.set(pk(doc), doc)
-  // Fetch EVERY user-folder doc not already in the owned window — own files
-  // older than the window and files shared by other users alike.
-  const missingFolderDocs = [...folderDocIds]
-    .filter((id) => !docsById.has(id))
-    .slice(0, FOLDER_DOCS_CAP)
-  if (missingFolderDocs.length > 0) {
-    const shared = await getObjectsByIds<DocRow>(
-      "OrbitDocsList",
-      "primaryKey_",
-      missingFolderDocs
-    )
-    for (const [id, doc] of shared) {
-      if (doc.isActive !== false) docsById.set(id, doc)
-    }
-  }
-
-  let docs = [...docsById.values()]
-  if (!includeSynced) {
-    docs = docs.filter((d) => !(d.sourceType ?? "").trim())
-  }
-  // Cap the raw window only — folder members always survive, so the Library
-  // tree shows complete folders plus the newest `limit` loose files.
-  const rawDocs = docs
-    .filter((d) => !folderDocIds.has(pk(d)))
-    .sort((a, b) => byCreatedAt(b, a))
-    .slice(0, limit)
-  const folderDocs = docs.filter((d) => folderDocIds.has(pk(d)))
-  docs = [...folderDocs, ...rawDocs].sort((a, b) => byCreatedAt(b, a))
-  // Status only for the docs we actually return — not the whole 21k-row table.
-  await ownedStatusWarm
-  const indexStatus = await getIndexStatusForDocs(docs.map(pk))
-  return { docs, sharedFolderNames, folders, indexStatus }
+  folderCache = { email, rows: accessible, at: Date.now() }
+  return accessible
 }
 
-export async function getDoc(pkValue: string): Promise<DocRow | null> {
-  return getObject<DocRow>("OrbitDocsList", pkValue)
+export async function getFolder(folderId: string): Promise<FolderRow | null> {
+  return getObject<FolderRow>("OrbitDocsFolderRegistry", folderId)
 }
 
-/**
- * Server-side document search across the user's WHOLE corpus (~19k docs on
- * the real tenant), not just the newest page the library holds. Uses the
- * ontology's `containsAllTerms` text match on documentName (verified live),
- * pushed upstream with the same access filters as listAccessibleDocs.
- * Folder-shared docs are matched by substring over the (bounded) shared set.
- */
-export async function searchAccessibleDocs(
-  userEmail: string,
-  query: string,
-  { limit = 50 }: { limit?: number } = {}
-): Promise<ListDocsResult> {
-  const user = normalizeEmail(userEmail)
-  const q = query.trim()
-  if (!q) return listAccessibleDocs(userEmail, { limit })
-
-  const foldersPromise = getAccessibleFolders(user)
-  const ownedPage = await searchObjectsPage<DocRow>("OrbitDocsList", {
-    where: {
-      type: "and",
-      value: [
-        // case-insensitive (term match); over-matches rejected below
-        emailWhere("addedBy", user),
-        { type: "eq", field: "isActive", value: true },
-        { type: "containsAllTerms", field: "documentName", value: q },
-      ],
-    },
-    orderBy: { fields: [{ field: "createdAt", direction: "desc" }] },
-    select: DOC_LIST_FIELDS,
-    pageSize: limit,
-  })
-  const folders = await foldersPromise
-  const { sharedFolderNames, folderDocIds } = folderMembership(folders)
-
-  const docsById = new Map<string, DocRow>()
-  for (const doc of ownedPage.data.filter((d) => sameEmail(d.addedBy, user))) {
-    docsById.set(pk(doc), doc)
-  }
-
-  // Folder-shared docs can't be term-searched upstream (no addedBy filter
-  // would over-match); fetch the bounded shared set and substring-match.
-  const missingShared = [...folderDocIds].filter((id) => !docsById.has(id))
-  const SHARED_SEARCH_CAP = 500
-  if (missingShared.length > 0 && missingShared.length <= SHARED_SEARCH_CAP) {
-    const shared = await getObjectsByIds<DocRow>(
-      "OrbitDocsList",
-      "primaryKey_",
-      missingShared
-    )
-    const needle = q.toLowerCase()
-    for (const [id, doc] of shared) {
-      if (doc.isActive === false) continue
-      if (!(doc.documentName ?? "").toLowerCase().includes(needle)) continue
-      docsById.set(id, doc)
-    }
-  }
-
-  let docs = [...docsById.values()]
-  docs.sort((a, b) => byCreatedAt(b, a))
-  docs = docs.slice(0, limit)
-  const indexStatus = await getIndexStatusForDocs(docs.map(pk))
-  return { docs, sharedFolderNames, folders, indexStatus }
-}
-
-export async function createDocRow(params: {
-  documentName: string
-  reference: unknown
-  noPages: number
-  addedBy: string
-}): Promise<void> {
-  await applyAction("create-orbit-docs-list", {
-    documentName: params.documentName,
-    reference: params.reference,
-    isIndexed: false,
-    isActive: true,
-    noPages: params.noPages,
-    addedBy: normalizeEmail(params.addedBy),
-    createdAt: now(),
-  })
-}
-
-/** Soft-delete a doc, replaying required params (matches PoC edit action). */
-export async function softDeleteDoc(doc: DocRow): Promise<void> {
-  await applyAction("edit-orbit-docs-list", {
-    OrbitDocsList: pk(doc),
-    isActive: false,
-    isIndexed: Boolean(doc.isIndexed),
-    addedBy: normalizeEmail(doc.addedBy),
-    documentName: doc.documentName ?? "",
-    createdAt: doc.createdAt ?? now(),
-    reference: doc.reference,
-  })
-}
-
-export async function removeDocFromFolders(
-  docId: string,
-  folders: FolderRow[]
-): Promise<string[]> {
-  // Each folder edit targets a distinct row, so run them concurrently.
-  const results = await Promise.all(
-    folders.map(async (folder) => {
-      const contents = (folder.contents ?? []).map(String)
-      if (!contents.includes(docId)) return null
-      await applyAction("edit-orbit-folders", {
-        OrbitFolders: pk(folder),
-        contents: contents.filter((id) => id !== docId),
-        updatedAt: now(),
-      })
-      return folder.name ?? pk(folder)
-    })
-  )
-  const removedFrom = results.filter((name): name is string => name !== null)
-  if (removedFrom.length > 0) invalidateFolderCache()
-  return removedFrom
-}
-
-export async function createFolder(params: {
+export async function createFolder(input: {
   name: string
-  createdBy: string
-  color?: string
-  accessEmails?: string[]
-  contents?: string[]
+  parentFolderId?: string | null
+  ownerUserId: string
+  allowedUserIds?: string[]
 }): Promise<string> {
-  const creator = normalizeEmail(params.createdBy)
-  const accessEmails = [
-    creator,
-    ...(params.accessEmails ?? []).flatMap((e) => {
-      const email = normalizeEmail(e)
-      return email !== creator ? [email] : []
-    }),
+  const owner = normalizeEmail(input.ownerUserId)
+  const allowed = [
+    owner,
+    ...(input.allowedUserIds ?? []).map(normalizeEmail).filter(Boolean),
   ]
   const response = await applyAction(
-    "create-orbit-folders",
+    "create-orbit-docs-folder-registry",
     {
-      name: params.name,
-      createdBy: creator,
-      accessEmails,
-      contents: params.contents ?? [],
-      color: params.color,
-      updatedAt: now(),
+      name: input.name,
+      parentFolderId: input.parentFolderId || ROOT_FOLDER_ID,
+      ownerUserId: owner,
+      allowedUserIds: [...new Set(allowed)],
+      createdTs: nowIso(),
     },
     { returnEdits: true }
   )
   invalidateFolderCache()
-  return extractCreatedPrimaryKey(response, "OrbitFolders")
+  return extractCreatedPrimaryKey(response, "OrbitDocsFolderRegistry")
 }
 
+/** Full-replay edit; unspecified fields keep the row's current values. */
 export async function editFolder(
-  folderId: string,
+  folder: FolderRow,
   fields: Partial<{
     name: string
-    color: string
-    accessEmails: string[]
-    contents: string[]
+    parentFolderId: string
+    allowedUserIds: string[]
   }>
 ): Promise<void> {
-  await applyAction("edit-orbit-folders", {
-    OrbitFolders: folderId,
-    ...fields,
-    updatedAt: now(),
+  await applyAction("edit-orbit-docs-folder-registry", {
+    OrbitDocsFolderRegistry: pk(folder),
+    name: fields.name ?? folder.name ?? "",
+    parentFolderId:
+      fields.parentFolderId ?? folder.parentFolderId ?? ROOT_FOLDER_ID,
+    ownerUserId: normalizeEmail(folder.ownerUserId),
+    allowedUserIds:
+      fields.allowedUserIds ?? folder.allowedUserIds ?? undefined,
+    createdTs: folder.createdTs ?? nowIso(),
   })
   invalidateFolderCache()
 }
 
 export async function deleteFolder(folderId: string): Promise<void> {
-  await applyAction("delete-orbit-folders", { OrbitFolders: folderId })
+  await applyAction("delete-orbit-docs-folder-registry", {
+    OrbitDocsFolderRegistry: folderId,
+  })
   invalidateFolderCache()
 }
 
+export function serializeFolder(row: FolderRow) {
+  return {
+    primaryKey: pk(row),
+    name: row.name ?? "",
+    // v3 has no folder color — the UI keeps colors as a local preference
+    color: null as string | null,
+    parentId:
+      !row.parentFolderId || row.parentFolderId === ROOT_FOLDER_ID
+        ? null
+        : row.parentFolderId,
+    createdBy: normalizeEmail(row.ownerUserId),
+    accessEmails: (row.allowedUserIds ?? []).map(normalizeEmail),
+    updatedAt: row.createdTs ?? null,
+  }
+}
+
 /* ------------------------------------------------------------------ */
-/* Sessions / messages / branches                                       */
+/* Documents                                                            */
 /* ------------------------------------------------------------------ */
 
-/** Columns needed to render the session list — projected to shrink payloads. */
+export const DOC_LIST_LIMIT = 200
+
+const DOC_LIST_FIELDS = [
+  "documentId",
+  "fileName",
+  "mime",
+  "mediaPath",
+  "mediaItemRid",
+  "mediaReference",
+  "parentFolderId",
+  "status",
+  "uploadTs",
+  "userEmail",
+  "allowedUserIds",
+]
+
+function accessibleDocsWhere(email: string): WhereClause {
+  return {
+    type: "or",
+    value: [
+      emailWhere("userEmail", email),
+      { type: "contains", field: "allowedUserIds", value: normalizeEmail(email) },
+    ],
+  }
+}
+
+export function canAccessDoc(doc: DocRow, email: string): boolean {
+  return (
+    sameEmail(doc.userEmail, email) ||
+    (doc.allowedUserIds ?? []).some((entry) => sameEmail(entry, email))
+  )
+}
+
+export async function listAccessibleDocs(
+  userEmail: string,
+  { limit = DOC_LIST_LIMIT }: { limit?: number } = {}
+): Promise<{ docs: DocRow[]; hasMore: boolean }> {
+  const rows = await searchObjects<DocRow>("OrbitDocsDocMeta", {
+    where: accessibleDocsWhere(userEmail),
+    orderBy: { fields: [{ field: "uploadTs", direction: "desc" }] },
+    select: DOC_LIST_FIELDS,
+    pageSize: Math.min(limit + 1, 1000),
+    maxItems: limit + 1,
+  })
+  const docs = rows.filter((row) => canAccessDoc(row, userEmail))
+  return { docs: docs.slice(0, limit), hasMore: docs.length > limit }
+}
+
+export async function searchAccessibleDocs(
+  userEmail: string,
+  query: string,
+  { limit = 50 }: { limit?: number } = {}
+): Promise<DocRow[]> {
+  const rows = await searchObjects<DocRow>("OrbitDocsDocMeta", {
+    where: {
+      type: "and",
+      value: [
+        accessibleDocsWhere(userEmail),
+        { type: "containsAllTerms", field: "fileName", value: query },
+      ],
+    },
+    select: DOC_LIST_FIELDS,
+    pageSize: limit,
+    maxItems: limit,
+  })
+  return rows.filter((row) => canAccessDoc(row, userEmail))
+}
+
+export async function getDoc(docId: string): Promise<DocRow | null> {
+  return getObject<DocRow>("OrbitDocsDocMeta", docId)
+}
+
+export async function getDocsByIds(ids: string[]): Promise<Map<string, DocRow>> {
+  return getObjectsByIds<DocRow>("OrbitDocsDocMeta", "documentId", ids)
+}
+
+/**
+ * Register an uploaded media item in the Document Registry. The media
+ * reference must come from a fresh uploadMedia() call; `mediaPath` is the
+ * media-set join key the indexing schedule uses for attribution.
+ */
+export async function createDocRow(input: {
+  fileName: string
+  mime: string
+  mediaPath: string
+  mediaItemRid: string
+  mediaReference: MediaReference
+  parentFolderId?: string | null
+  userEmail: string
+  allowedUserIds?: string[]
+}): Promise<string> {
+  const email = normalizeEmail(input.userEmail)
+  const allowed = [
+    email,
+    ...(input.allowedUserIds ?? []).map(normalizeEmail).filter(Boolean),
+  ]
+  const response = await applyAction(
+    "create-orbit-docs-doc-meta",
+    {
+      fileName: input.fileName,
+      mime: input.mime,
+      mediaPath: input.mediaPath,
+      mediaItemRid: input.mediaItemRid,
+      mediaReference: input.mediaReference,
+      parentFolderId: input.parentFolderId || ROOT_FOLDER_ID,
+      status: "uploaded",
+      uploadTs: nowIso(),
+      userEmail: email,
+      allowedUserIds: [...new Set(allowed)],
+    },
+    { returnEdits: true }
+  )
+  return extractCreatedPrimaryKey(response, "OrbitDocsDocMeta")
+}
+
+/** Full-replay edit (move between folders, share, status). */
+export async function editDocRow(
+  doc: DocRow,
+  fields: Partial<{
+    parentFolderId: string
+    allowedUserIds: string[]
+    status: string
+    fileName: string
+  }>
+): Promise<void> {
+  if (!doc.mediaReference) {
+    throw new Error(`Doc ${pk(doc)} has no media reference; cannot edit`)
+  }
+  await applyAction("edit-orbit-docs-doc-meta", {
+    OrbitDocsDocMeta: pk(doc),
+    fileName: fields.fileName ?? doc.fileName ?? "",
+    mime: doc.mime ?? "application/pdf",
+    mediaPath: doc.mediaPath ?? "",
+    mediaItemRid: doc.mediaItemRid ?? "",
+    mediaReference: doc.mediaReference,
+    parentFolderId: fields.parentFolderId ?? doc.parentFolderId ?? ROOT_FOLDER_ID,
+    status: fields.status ?? doc.status ?? "uploaded",
+    uploadTs: doc.uploadTs ?? nowIso(),
+    userEmail: normalizeEmail(doc.userEmail),
+    allowedUserIds: fields.allowedUserIds ?? doc.allowedUserIds ?? undefined,
+  })
+}
+
+/** v3 has no isActive soft delete — deleting the registry row is final. */
+export async function deleteDocRow(docId: string): Promise<void> {
+  await applyAction("delete-orbit-docs-doc-meta", { OrbitDocsDocMeta: docId })
+}
+
+/* ------------------------------------------------------------------ */
+/* Indexing progress (chunk/entity counts per document)                 */
+/* ------------------------------------------------------------------ */
+
+export interface IndexCounts {
+  chunkCount: number
+  entityCount: number
+  relationshipCount: number
+  /** Source page count from the materialized status object (null if unknown). */
+  pageCount: number | null
+  /** Pipeline stage, e.g. "indexed" (null if no status row yet). */
+  stage: string | null
+  isSearchable: boolean
+}
+
+interface DocStatusRow {
+  documentId?: string
+  mediaItemRid?: string
+  chunkCount?: string | number
+  entityCount?: string | number
+  relationshipCount?: string | number
+  pageCount?: string | number
+  stage?: string
+  isSearchable?: boolean
+}
+
+/** Foundry serializes Long properties as strings. */
+const toCount = (value: unknown): number => {
+  const n = Number(value)
+  return Number.isFinite(n) ? n : 0
+}
+
+const indexCountCache = new Map<string, { at: number; counts: IndexCounts }>()
+const INDEX_COUNT_TTL_MS = 5_000
+
+/**
+ * Indexing is asynchronous (schedule-driven). A document is ready to chat
+ * when it has chunks; its knowledge graph is ready when it has entities.
+ *
+ * Counts come from the materialized [Orbit Docs] Document Status object:
+ * one batched object load per 100 docs instead of two aggregation scans
+ * over the (large) chunk and entity tables. Status rows are looked up by
+ * documentId first; pipeline-registered status rows key by fileName rather
+ * than the app's UUID documentId, so any doc without a direct hit is
+ * resolved through the shared mediaItemRid instead (verified live: both
+ * identities carry the same media item RID). A doc with neither reads as
+ * zero counts (not ready) — matching the prior aggregation behaviour.
+ * DocumentStatus is a counts source only; access control stays on DocMeta,
+ * whose allowedUserIds/userEmail are the email-based authority.
+ */
+type IndexCountsDoc = Pick<
+  DocRow,
+  "__primaryKey" | "documentId" | "mediaItemRid"
+>
+
+export async function getIndexCountsForDocs(
+  docs: IndexCountsDoc[]
+): Promise<Map<string, IndexCounts>> {
+  const out = new Map<string, IndexCounts>()
+  const missing = new Map<string, IndexCountsDoc>()
+  const now = Date.now()
+  for (const doc of docs) {
+    const id = pk(doc)
+    if (!id || out.has(id) || missing.has(id)) continue
+    const cached = indexCountCache.get(id)
+    if (cached && now - cached.at < INDEX_COUNT_TTL_MS) {
+      out.set(id, cached.counts)
+    } else {
+      missing.set(id, doc)
+    }
+  }
+  if (missing.size > 0) {
+    const statuses = await getObjectsByIds<DocStatusRow>(
+      "OrbitDocsDocumentStatus",
+      "documentId",
+      [...missing.keys()]
+    )
+    const unresolvedRids = [
+      ...new Set(
+        [...missing.entries()]
+          .filter(([id, doc]) => !statuses.has(id) && doc.mediaItemRid)
+          .map(([, doc]) => String(doc.mediaItemRid))
+      ),
+    ]
+    const byRid =
+      unresolvedRids.length > 0
+        ? await getObjectsByIds<DocStatusRow>(
+            "OrbitDocsDocumentStatus",
+            "mediaItemRid",
+            unresolvedRids
+          )
+        : new Map<string, DocStatusRow>()
+    for (const [id, doc] of missing) {
+      const row =
+        statuses.get(id) ??
+        (doc.mediaItemRid ? byRid.get(String(doc.mediaItemRid)) : undefined)
+      const counts: IndexCounts = {
+        chunkCount: toCount(row?.chunkCount),
+        entityCount: toCount(row?.entityCount),
+        relationshipCount: toCount(row?.relationshipCount),
+        pageCount: row?.pageCount != null ? toCount(row.pageCount) : null,
+        stage: row?.stage ?? null,
+        isSearchable: Boolean(row?.isSearchable),
+      }
+      indexCountCache.set(id, { at: now, counts })
+      out.set(id, counts)
+    }
+  }
+  return out
+}
+
+/** appPk -> chunk-owning documentId; the mapping is stable once indexed. */
+const chunkOwnerCache = new Map<string, { at: number; owner: string }>()
+const CHUNK_OWNER_TTL_MS = 5 * 60_000
+
+/**
+ * Resolve the documentId that actually owns each doc's chunks — the identity
+ * the agent's retrieval joins on. Pipeline-registered rows own their chunks
+ * under their own id; app-registered (UUID) rows are re-keyed to the
+ * pipeline's fileName-keyed identity through the shared mediaItemRid on the
+ * status object. Docs with no status row yet (still indexing) keep their own
+ * id — there is nothing to retrieve under either identity — and are not
+ * cached so they re-resolve as soon as indexing lands.
+ */
+export async function resolveChunkOwnerIds(
+  docs: IndexCountsDoc[]
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>()
+  const missing = new Map<string, IndexCountsDoc>()
+  const now = Date.now()
+  for (const doc of docs) {
+    const id = pk(doc)
+    if (!id || out.has(id) || missing.has(id)) continue
+    const cached = chunkOwnerCache.get(id)
+    if (cached && now - cached.at < CHUNK_OWNER_TTL_MS) {
+      out.set(id, cached.owner)
+    } else {
+      missing.set(id, doc)
+    }
+  }
+  if (missing.size > 0) {
+    const statuses = await getObjectsByIds<DocStatusRow>(
+      "OrbitDocsDocumentStatus",
+      "documentId",
+      [...missing.keys()]
+    )
+    const unresolvedRids = [
+      ...new Set(
+        [...missing.entries()]
+          .filter(([id, doc]) => !statuses.has(id) && doc.mediaItemRid)
+          .map(([, doc]) => String(doc.mediaItemRid))
+      ),
+    ]
+    const byRid =
+      unresolvedRids.length > 0
+        ? await getObjectsByIds<DocStatusRow>(
+            "OrbitDocsDocumentStatus",
+            "mediaItemRid",
+            unresolvedRids
+          )
+        : new Map<string, DocStatusRow>()
+    for (const [id, doc] of missing) {
+      const viaRid = doc.mediaItemRid
+        ? byRid.get(String(doc.mediaItemRid))
+        : undefined
+      const owner = statuses.has(id)
+        ? id
+        : viaRid?.documentId
+          ? String(viaRid.documentId)
+          : null
+      if (owner) {
+        chunkOwnerCache.set(id, { at: now, owner })
+        out.set(id, owner)
+      } else {
+        out.set(id, id)
+      }
+    }
+  }
+  return out
+}
+
+/** Docs sitting in the given folders, filtered to what the user may read. */
+export async function listDocsInFolders(
+  folderIds: string[],
+  userEmail: string
+): Promise<DocRow[]> {
+  const unique = [...new Set(folderIds.filter(Boolean))]
+  if (unique.length === 0) return []
+  const rows = await searchObjects<DocRow>("OrbitDocsDocMeta", {
+    where: { type: "in", field: "parentFolderId", value: unique },
+    select: DOC_LIST_FIELDS,
+    pageSize: 1000,
+  })
+  return rows.filter((row) => canAccessDoc(row, userEmail))
+}
+
+export function serializeDoc(
+  doc: DocRow,
+  {
+    indexCounts,
+    sharedFolderNames = [],
+    userEmail,
+  }: {
+    indexCounts?: IndexCounts | null
+    sharedFolderNames?: string[]
+    userEmail?: string
+  } = {}
+) {
+  const id = pk(doc)
+  const isIndexed = (indexCounts?.chunkCount ?? 0) > 0
+  const noPages = indexCounts?.pageCount ?? null
+  return {
+    primaryKey: id,
+    documentName: doc.fileName ?? id,
+    addedBy: normalizeEmail(doc.userEmail),
+    isActive: true,
+    isIndexed,
+    isSharedFromFolder:
+      Boolean(userEmail) && !sameEmail(doc.userEmail, userEmail ?? ""),
+    sharedFolderNames,
+    createdAt: doc.uploadTs ?? null,
+    noPages,
+    folderId:
+      !doc.parentFolderId || doc.parentFolderId === ROOT_FOLDER_ID
+        ? null
+        : doc.parentFolderId,
+    status: doc.status ?? "uploaded",
+    indexStatus: indexCounts
+      ? {
+          isIndexingComplete: isIndexed,
+          embeddingCount: indexCounts.chunkCount,
+          entityCount: indexCounts.entityCount,
+          kgReady: indexCounts.entityCount > 0,
+          lastUpdated: null as string | null,
+          noPages,
+        }
+      : null,
+    isVLM: false,
+    sourceType: "",
+    sourceWebUrl: null as string | null,
+    sourceSyncConfigPk: null as string | null,
+    mediaItemRid: doc.mediaItemRid ?? null,
+    mime: doc.mime ?? "application/pdf",
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Chat sessions & message tree                                         */
+/* ------------------------------------------------------------------ */
+
 const SESSION_LIST_FIELDS = [
-  "primaryKey_",
+  "sessionId",
+  "userEmail",
   "title",
-  "mode",
   "summary",
+  "options",
   "createdAt",
-  "updatedAt",
+  "lastUpdatedAt",
   "isDeleted",
-  "docsAttached",
-  "foldersAttached",
-  "chatFolderId",
-  "activeBranchId",
-  "defaultBranchId",
-  "currentRunStatus",
-  "user",
+  "activeLeafMessageId",
 ]
 
 export async function listSessions(userEmail: string): Promise<SessionRow[]> {
-  const rows = await searchObjects<SessionRow>("OrbitDocsUserSessions", {
-    // case-insensitive (term match); over-matches rejected below
-    where: emailWhere("user", userEmail),
-    pageSize: 1000,
+  const rows = await searchObjects<SessionRow>("OrbitDocsChatSessions", {
+    where: emailWhere("userEmail", userEmail),
     select: SESSION_LIST_FIELDS,
+    pageSize: 1000,
   })
-  // isDeleted is nullable — NULL means active, so filter in JS (PoC behavior)
   return rows
-    .filter((row) => !row.isDeleted && sameEmail(row.user, userEmail))
-    .sort((a, b) => {
-      const ta = a.updatedAt ?? a.createdAt ?? ""
-      const tb = b.updatedAt ?? b.createdAt ?? ""
-      return ta < tb ? 1 : -1
-    })
+    .filter(
+      (row) => sameEmail(row.userEmail, userEmail) && row.isDeleted !== true
+    )
+    .sort((a, b) =>
+      String(b.lastUpdatedAt ?? b.createdAt ?? "").localeCompare(
+        String(a.lastUpdatedAt ?? a.createdAt ?? "")
+      )
+    )
 }
 
 export async function getSessionRow(
   sessionId: string,
   userEmail: string
 ): Promise<SessionRow | null> {
-  const row = await getObject<SessionRow>("OrbitDocsUserSessions", sessionId)
-  if (!row || row.isDeleted) return null
-  if (!sameEmail(row.user, userEmail)) return null
+  const row = await getObject<SessionRow>("OrbitDocsChatSessions", sessionId)
+  if (!row || row.isDeleted === true) return null
+  if (!sameEmail(row.userEmail, userEmail)) return null
   return row
 }
 
-export async function getSessionMessages(sessionId: string): Promise<MessageRow[]> {
-  const rows = await searchObjects<MessageRow>("OrbitSessionMessages", {
+export async function createSessionRow(input: {
+  userEmail: string
+  title?: string
+  options?: SessionOptions
+}): Promise<string> {
+  const response = await applyAction(
+    "create-orbit-docs-chat-sessions",
+    {
+      userEmail: normalizeEmail(input.userEmail),
+      title: input.title ?? "New chat",
+      summary: "",
+      options: JSON.stringify(input.options ?? {}),
+      createdAt: nowIso(),
+      lastUpdatedAt: nowIso(),
+      isDeleted: false,
+      activeLeafMessageId: "",
+    },
+    { returnEdits: true }
+  )
+  return extractCreatedPrimaryKey(response, "OrbitDocsChatSessions")
+}
+
+/**
+ * Full-replay session edit. Options patches merge into the current options
+ * JSON so writers don't clobber unrelated keys they didn't touch.
+ */
+export async function updateSessionRow(
+  session: SessionRow,
+  fields: Partial<{
+    title: string
+    summary: string
+    isDeleted: boolean
+    activeLeafMessageId: string
+    options: SessionOptions
+  }>
+): Promise<void> {
+  const mergedOptions = fields.options
+    ? { ...sessionOptions(session), ...fields.options }
+    : sessionOptions(session)
+  await applyAction("edit-orbit-docs-chat-sessions", {
+    OrbitDocsChatSessions: pk(session),
+    userEmail: normalizeEmail(session.userEmail),
+    title: fields.title ?? session.title ?? "New chat",
+    summary: fields.summary ?? session.summary ?? "",
+    options: JSON.stringify(mergedOptions),
+    createdAt: session.createdAt ?? nowIso(),
+    lastUpdatedAt: nowIso(),
+    isDeleted: fields.isDeleted ?? session.isDeleted ?? false,
+    activeLeafMessageId:
+      fields.activeLeafMessageId ?? session.activeLeafMessageId ?? "",
+  })
+}
+
+export async function getSessionMessages(
+  sessionId: string
+): Promise<MessageRow[]> {
+  const rows = await searchObjects<MessageRow>("OrbitDocsChatMessages", {
     where: { type: "eq", field: "sessionId", value: sessionId },
     pageSize: 2000,
   })
-  return rows.sort(byCreatedAt)
-}
-
-export async function getSessionBranches(sessionId: string): Promise<BranchRow[]> {
-  const rows = await searchObjects<BranchRow>("OrbitSessionBranches", {
-    where: { type: "eq", field: "sessionId", value: sessionId },
-    pageSize: 1000,
-  })
   return rows
-    .filter((row) => !row.isDeleted)
-    .sort((a, b) => byCreatedAt(a, b))
+    .filter((row) => row.isDeleted !== true)
+    .sort((a, b) => {
+      const at = String(a.createdAt ?? "")
+      const bt = String(b.createdAt ?? "")
+      return at === bt ? pk(a).localeCompare(pk(b)) : at.localeCompare(bt)
+    })
 }
 
-export async function updateSessionRow(
-  sessionId: string,
-  fields: Record<string, unknown>
-): Promise<SessionRow | null> {
-  // Preserve attachments unless explicitly updating them (PoC semantics —
-  // omitted optional action params would otherwise clear the arrays).
-  const current = await getObject<SessionRow>("OrbitDocsUserSessions", sessionId)
-  const params: Record<string, unknown> = {
-    OrbitDocsUserSessions: sessionId,
-    ...fields,
-  }
-  if (current) {
-    if (!("docsAttached" in fields)) params.docsAttached = current.docsAttached ?? []
-    if (!("foldersAttached" in fields))
-      params.foldersAttached = current.foldersAttached ?? []
-  }
-  await applyAction("edit-orbit-docs-user-sessions", params)
-  return getObject<SessionRow>("OrbitDocsUserSessions", sessionId)
-}
-
-export async function createSessionRow(params: {
-  userEmail: string
-  mode: string
-  docsAttached: string[]
-  foldersAttached: string[]
-  agentRid: string
-  agentVersion?: string | null
-}): Promise<SessionRow> {
-  const timestamp = now()
-  const response = await applyAction(
-    "create-orbit-docs-user-sessions",
-    {
-      user: normalizeEmail(params.userEmail),
-      title: "New chat",
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      docsAttached: params.docsAttached,
-      foldersAttached: params.foldersAttached,
-      summary: "",
-      currentSessionId: "",
-      currentAgentRid: params.agentRid,
-      currentAgentVersion: params.agentVersion ?? undefined,
-      currentRunStatus: "idle",
-      mode: normalizeMode(params.mode),
-    },
-    { returnEdits: true }
-  )
-  const sessionId = extractCreatedPrimaryKey(response, "OrbitDocsUserSessions")
-
-  const branchId = await createBranchRow({
-    sessionId,
-    createdBy: params.userEmail,
-    name: "main",
-    isDefault: true,
-    anchorMessageId: null,
-  })
-  const updated = await updateSessionRow(sessionId, {
-    activeBranchId: branchId,
-    defaultBranchId: branchId,
-    updatedAt: now(),
-  })
-  if (!updated) throw new Error("Session vanished after creation")
-  return updated
-}
-
-export async function createBranchRow(params: {
+export async function createMessageRow(input: {
   sessionId: string
-  createdBy: string
-  name: string
-  isDefault?: boolean
-  anchorMessageId?: string | null
-}): Promise<string> {
-  const timestamp = now()
-  const response = await applyAction(
-    "create-orbit-session-branches",
-    {
-      sessionId: params.sessionId,
-      createdBy: normalizeEmail(params.createdBy),
-      name: params.name,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      summary: "",
-      isDefault: Boolean(params.isDefault),
-      isDeleted: false,
-      anchorMessageId: params.anchorMessageId || undefined,
-      headMessageId: params.anchorMessageId || undefined,
-    },
-    { returnEdits: true }
-  )
-  return extractCreatedPrimaryKey(response, "OrbitSessionBranches")
-}
-
-/** Full-replay branch edit (edit action rewrites all provided params). */
-export async function updateBranchRow(
-  branch: BranchRow,
-  fields: Partial<BranchRow>
-): Promise<void> {
-  await applyAction("edit-orbit-session-branches", {
-    OrbitSessionBranches: pk(branch),
-    sessionId: branch.sessionId,
-    name: fields.name ?? branch.name ?? "main",
-    createdBy: branch.createdBy,
-    createdAt: branch.createdAt,
-    summary: fields.summary ?? branch.summary ?? "",
-    isDefault: fields.isDefault ?? Boolean(branch.isDefault),
-    isDeleted: fields.isDeleted ?? Boolean(branch.isDeleted),
-    deletedAt: fields.deletedAt ?? branch.deletedAt,
-    anchorMessageId: fields.anchorMessageId ?? branch.anchorMessageId,
-    headMessageId: fields.headMessageId ?? branch.headMessageId,
-    updatedAt: now(),
-  })
-}
-
-export async function createMessageRow(params: {
-  sessionId: string
-  message: string
-  isAgent: boolean
-  mode: string
-  branchId?: string | null
+  role: "user" | "assistant"
+  content: string
   parentMessageId?: string | null
-  branchIndex?: number
+  scope?: { documentIds: string[]; folderIds: string[] }
+  citations?: unknown[]
+  model?: string
 }): Promise<string> {
   const response = await applyAction(
-    "create-orbit-session-messages",
+    "create-orbit-docs-chat-messages",
     {
-      sessionId: params.sessionId,
-      message: params.message,
-      isAgent: params.isAgent,
-      title: "",
-      createdAt: now(),
-      mode: normalizeMode(params.mode),
-      branchId: params.branchId ?? undefined,
-      parentMessageId: params.parentMessageId ?? undefined,
-      branchIndex: params.branchIndex,
+      sessionId: input.sessionId,
+      role: input.role,
+      content: input.content,
+      parentMessageId: input.parentMessageId ?? "",
+      scope: JSON.stringify(input.scope ?? { documentIds: [], folderIds: [] }),
+      citations: JSON.stringify(input.citations ?? []),
+      model: input.model ?? "",
+      createdAt: nowIso(),
+      isDeleted: false,
     },
     { returnEdits: true }
   )
-  return extractCreatedPrimaryKey(response, "OrbitSessionMessages")
+  return extractCreatedPrimaryKey(response, "OrbitDocsChatMessages")
+}
+
+/** Walk parentMessageId links from a leaf to the root; returns root→leaf. */
+export function linearizeMessagePath(
+  messages: MessageRow[],
+  leafMessageId: string | null | undefined
+): MessageRow[] {
+  const byId = new Map(messages.map((m) => [pk(m), m]))
+  const path: MessageRow[] = []
+  const seen = new Set<string>()
+  let cursor = leafMessageId ? byId.get(leafMessageId) : undefined
+  while (cursor) {
+    const id = pk(cursor)
+    if (seen.has(id)) break
+    seen.add(id)
+    path.push(cursor)
+    cursor = cursor.parentMessageId
+      ? byId.get(cursor.parentMessageId)
+      : undefined
+  }
+  return path.reverse()
+}
+
+export function serializeMessage(row: MessageRow) {
+  let citations: unknown[] = []
+  try {
+    const parsed = JSON.parse(row.citations ?? "[]")
+    if (Array.isArray(parsed)) citations = parsed
+  } catch {
+    // tolerate malformed rows
+  }
+  return {
+    id: pk(row),
+    role: row.role === "assistant" ? ("assistant" as const) : ("user" as const),
+    content: row.content ?? "",
+    createdAt: row.createdAt ?? null,
+    parentMessageId: row.parentMessageId || null,
+    model: row.model || null,
+    citations,
+    scope: parseOptions<{ documentIds?: string[]; folderIds?: string[] }>(
+      row.scope
+    ),
+  }
+}
+
+export function serializeSession(row: SessionRow, messageCount = 0) {
+  const options = sessionOptions(row)
+  return {
+    rid: pk(row),
+    mode: "regular" as const,
+    chatFolderId: options.chatFolderId ?? null,
+    isDeleted: row.isDeleted === true,
+    activeLeafMessageId: row.activeLeafMessageId || null,
+    metadata: {
+      title: row.title ?? "New chat",
+      createdTime: row.createdAt ?? null,
+      updatedTime: row.lastUpdatedAt ?? null,
+      messageCount,
+    },
+    docsAttached: options.docsAttached ?? [],
+    foldersAttached: options.foldersAttached ?? [],
+    summary: row.summary ?? "",
+    currentRun: {
+      status: options.currentRun?.status ?? "idle",
+      error: options.currentRun?.error ?? null,
+      messageId: options.currentRun?.messageId ?? null,
+      startedAt: options.currentRun?.startedAt ?? null,
+    },
+  }
+}
+
+/** Full message tree + cursor; the client renders the active path. */
+export function serializeContent(messages: MessageRow[], session: SessionRow) {
+  return {
+    messages: messages.map(serializeMessage),
+    activeLeafMessageId: session.activeLeafMessageId || null,
+  }
 }
 
 /* ------------------------------------------------------------------ */
-/* Attachment sanitization (PoC access rules)                           */
+/* Attachment sanitation (scope = docs + folders the user can read)     */
 /* ------------------------------------------------------------------ */
 
 export interface SanitizedAttachments {
   docsAttached: string[]
   foldersAttached: string[]
-  /** effective document scope for agent turns (docs + folder contents) */
-  scopedDocIds: string[]
+  removedDocs: string[]
+  removedFolders: string[]
 }
 
 export async function sanitizeAttachments(
@@ -892,391 +960,119 @@ export async function sanitizeAttachments(
   requestedDocs: string[],
   requestedFolders: string[]
 ): Promise<SanitizedAttachments> {
-  const user = normalizeEmail(userEmail)
-  const folders = await getAccessibleFolders(user)
-  const folderDocs = new Map<string, string[]>()
-  const folderDocIds = new Set<string>()
-  for (const folder of folders) {
-    const docs = [...new Set((folder.contents ?? []).map(String))]
-    folderDocs.set(pk(folder), docs)
-    docs.forEach((id) => folderDocIds.add(id))
+  const [folders, docs] = await Promise.all([
+    getAccessibleFolders(userEmail),
+    getDocsByIds(requestedDocs),
+  ])
+  const folderIds = new Set(folders.map((f) => pk(f)))
+  const docsAttached: string[] = []
+  const removedDocs: string[] = []
+  for (const id of [...new Set(requestedDocs.filter(Boolean))]) {
+    const doc = docs.get(id)
+    if (doc && canAccessDoc(doc, userEmail)) docsAttached.push(id)
+    else removedDocs.push(id)
   }
-
-  const sanitizedFolders: string[] = []
-  const folderScope: string[] = []
-  const scopeSeen = new Set<string>()
-  for (const folderId of [...new Set(requestedFolders.map(String))]) {
-    const docs = folderDocs.get(folderId)
-    if (!docs) continue
-    sanitizedFolders.push(folderId)
-    for (const docId of docs) {
-      if (scopeSeen.has(docId)) continue
-      scopeSeen.add(docId)
-      folderScope.push(docId)
-    }
+  const foldersAttached: string[] = []
+  const removedFolders: string[] = []
+  for (const id of [...new Set(requestedFolders.filter(Boolean))]) {
+    if (folderIds.has(id)) foldersAttached.push(id)
+    else removedFolders.push(id)
   }
-
-  const uniqueDocs = [
-    ...new Set(
-      requestedDocs.flatMap((id) => {
-        const s = String(id)
-        return s ? [s] : []
-      })
-    ),
-  ]
-  const rows = await getObjectsByIds<DocRow>("OrbitDocsList", "primaryKey_", uniqueDocs)
-  const sanitizedDocs: string[] = []
-  for (const docId of uniqueDocs) {
-    const doc = rows.get(docId)
-    if (!doc || doc.isActive === false) continue
-    if (normalizeEmail(doc.addedBy) === user || folderDocIds.has(docId)) {
-      sanitizedDocs.push(docId)
-    }
-  }
-
-  const scopedDocIds = [...new Set([...sanitizedDocs, ...folderScope])]
-  return { docsAttached: sanitizedDocs, foldersAttached: sanitizedFolders, scopedDocIds }
+  return { docsAttached, foldersAttached, removedDocs, removedFolders }
 }
 
 /* ------------------------------------------------------------------ */
-/* Chat folders (session folders — PoC chat_folders.py)                 */
+/* Rate-limit grants                                                    */
 /* ------------------------------------------------------------------ */
 
-export const CHAT_FOLDER_COLORS = [
-  "slate",
-  "sky",
-  "indigo",
-  "teal",
-  "emerald",
-  "amber",
-  "rose",
-] as const
-
-export function normalizeChatFolderColor(
-  color: string | null | undefined
-): string | null {
-  const normalized = (color ?? "").trim().toLowerCase()
-  if (!normalized) return null
-  if (!(CHAT_FOLDER_COLORS as readonly string[]).includes(normalized)) {
-    throw new Error(
-      `Invalid folder color '${normalized}'. Allowed: ${CHAT_FOLDER_COLORS.join(", ")}`
-    )
-  }
-  return normalized
-}
-
-export async function listChatFolders(userEmail: string): Promise<ChatFolderRow[]> {
-  const rows = await searchObjects<ChatFolderRow>("OrbitChatFolders", {
-    // case-insensitive (term match); over-matches rejected below
-    where: emailWhere("createdBy", userEmail),
-    pageSize: 1000,
+export async function listGrantsForUser(
+  userEmail: string
+): Promise<GrantRow[]> {
+  const rows = await searchObjects<GrantRow>("OrbitDocsRateLimitGrants", {
+    where: emailWhere("userEmail", userEmail),
+    pageSize: 500,
   })
-  // isDeleted is nullable — NULL means active, so filter in JS (PoC quirk).
-  return rows
-    .filter((row) => !row.isDeleted && sameEmail(row.createdBy, userEmail))
-    .sort((a, b) => (a.name ?? "").toLowerCase().localeCompare((b.name ?? "").toLowerCase()))
+  return rows.filter((row) => sameEmail(row.userEmail, userEmail))
 }
 
-export async function getChatFolder(folderId: string): Promise<ChatFolderRow | null> {
-  const row = await getObject<ChatFolderRow>("OrbitChatFolders", folderId)
-  if (!row || row.isDeleted) return null
-  return row
+export async function listAllGrants(): Promise<GrantRow[]> {
+  return searchObjects<GrantRow>("OrbitDocsRateLimitGrants", {
+    pageSize: 2000,
+    maxItems: 10_000,
+  })
 }
 
-export async function createChatFolder(params: {
-  name: string
-  color?: string | null
+export function activeBonusUploads(
+  grants: GrantRow[],
+  at: Date = new Date()
+): number {
+  const now = at.getTime()
+  let bonus = 0
+  for (const grant of grants) {
+    const from = Date.parse(grant.validFrom ?? "")
+    const until = Date.parse(grant.validUntil ?? "")
+    if (Number.isFinite(from) && now < from) continue
+    if (Number.isFinite(until) && now > until) continue
+    bonus += Number(grant.bonusUploads ?? 0) || 0
+  }
+  return bonus
+}
+
+export async function createGrantRow(input: {
+  userEmail: string
+  bonusUploads: number
+  validFrom: string
+  validUntil: string
+  reason: string
   createdBy: string
 }): Promise<string> {
   const response = await applyAction(
-    "create-orbit-chat-folders",
+    "create-orbit-docs-v3rate-limit-grants",
     {
-      name: params.name.trim(),
-      color: normalizeChatFolderColor(params.color) ?? undefined,
-      createdBy: normalizeEmail(params.createdBy),
-      updatedAt: now(),
+      userEmail: normalizeEmail(input.userEmail),
+      bonusUploads: input.bonusUploads,
+      validFrom: input.validFrom,
+      validUntil: input.validUntil,
+      reason: input.reason,
+      createdBy: normalizeEmail(input.createdBy),
+      createdAt: nowIso(),
     },
     { returnEdits: true }
   )
-  return extractCreatedPrimaryKey(response, "OrbitChatFolders")
+  return extractCreatedPrimaryKey(response, "OrbitDocsRateLimitGrants")
 }
 
-/** Full-replay edit (PoC edit_orbit_chat_folders rewrites all params). */
-export async function updateChatFolder(
-  folder: ChatFolderRow,
-  fields: Partial<{ name: string; color: string | null; isDeleted: boolean; deletedAt: string }>
-): Promise<void> {
-  await applyAction("edit-orbit-chat-folders", {
-    OrbitChatFolders: pk(folder),
-    name: fields.name !== undefined ? fields.name.trim() : (folder.name ?? ""),
-    color:
-      fields.color !== undefined
-        ? (normalizeChatFolderColor(fields.color) ?? undefined)
-        : folder.color,
-    createdBy: folder.createdBy,
-    isDeleted: fields.isDeleted ?? Boolean(folder.isDeleted),
-    deletedAt: fields.deletedAt ?? folder.deletedAt,
-    updatedAt: now(),
-  })
-}
-
-export async function softDeleteChatFolder(folder: ChatFolderRow): Promise<void> {
-  await updateChatFolder(folder, { isDeleted: true, deletedAt: now() })
-}
-
-/** Active sessions filed in a chat folder (isDeleted nullable → JS filter). */
-export async function listSessionsInChatFolder(
-  folderId: string
-): Promise<SessionRow[]> {
-  const rows = await searchObjects<SessionRow>("OrbitDocsUserSessions", {
-    where: { type: "eq", field: "chatFolderId", value: folderId },
-    pageSize: 1000,
-    select: ["primaryKey_", "isDeleted", "chatFolderId", "user"],
-  })
-  return rows.filter((row) => !row.isDeleted)
-}
-
-export function serializeChatFolder(row: ChatFolderRow) {
+export function serializeGrant(row: GrantRow) {
   return {
     primaryKey: pk(row),
-    name: row.name ?? "",
-    color: (CHAT_FOLDER_COLORS as readonly string[]).includes(row.color ?? "")
-      ? row.color
-      : null,
+    userEmail: normalizeEmail(row.userEmail),
+    bonusUploads: Number(row.bonusUploads ?? 0) || 0,
+    validFrom: row.validFrom ?? null,
+    validUntil: row.validUntil ?? null,
+    reason: row.reason ?? "",
     createdBy: normalizeEmail(row.createdBy),
-    updatedAt: row.updatedAt ?? null,
-  }
-}
-
-/* ------------------------------------------------------------------ */
-/* Sync sources                                                          */
-/* ------------------------------------------------------------------ */
-
-/** Sources change rarely but are consulted on every explorer call — cache. */
-const SYNC_SOURCE_TTL_MS = 60_000
-const syncSourceCache = new Map<string, ReturnType<typeof memoTTL<SyncSourceRow[]>>>()
-
-export function invalidateSyncSourceCache(): void {
-  for (const loader of syncSourceCache.values()) loader.invalidate()
-}
-
-export async function listSyncSources(userEmail: string): Promise<SyncSourceRow[]> {
-  const user = normalizeEmail(userEmail)
-  let loader = syncSourceCache.get(user)
-  if (!loader) {
-    loader = memoTTL(SYNC_SOURCE_TTL_MS, async () => {
-      const rows = await searchObjects<SyncSourceRow>("OrbitSyncSource", {
-        pageSize: 1000,
-      })
-      return rows.filter((row) => {
-        const shared = (row.sharedWith ?? []).map(normalizeEmail)
-        return sameEmail(row.ownerEmail, user) || shared.includes(user)
-      })
-    })
-    syncSourceCache.set(user, loader)
-  }
-  return loader()
-}
-
-/* ------------------------------------------------------------------ */
-/* Serialization (frontend payload shapes, matching the PoC API)        */
-/* ------------------------------------------------------------------ */
-
-export function serializeSession(row: SessionRow, messageCount = 0) {
-  return {
-    rid: pk(row),
-    mode: normalizeMode(row.mode),
-    chatFolderId: row.chatFolderId ?? null,
-    activeBranchId: row.activeBranchId ?? null,
-    defaultBranchId: row.defaultBranchId ?? null,
-    isDeleted: Boolean(row.isDeleted),
-    metadata: {
-      title: row.title || "New chat",
-      createdTime: row.createdAt ?? null,
-      updatedTime: row.updatedAt ?? null,
-      messageCount,
-    },
-    docsAttached: (row.docsAttached ?? []).map(String),
-    foldersAttached: (row.foldersAttached ?? []).map(String),
-    summary: row.summary ?? "",
-    currentRun: {
-      status: row.currentRunStatus || "idle",
-      error: row.currentRunError ?? null,
-      agentRid: row.currentAgentRid ?? null,
-      agentVersion: row.currentAgentVersion ?? null,
-      sessionId: row.currentSessionId ?? null,
-      messageId: row.currentMessageId ?? null,
-      sessionTraceId: row.currentSessionTraceId ?? null,
-    },
-  }
-}
-
-export function serializeMessage(row: MessageRow) {
-  return {
-    id: pk(row),
-    role: row.isAgent ? ("assistant" as const) : ("user" as const),
-    content: row.message ?? "",
-    title: row.title ?? "",
-    mode: normalizeMode(row.mode),
     createdAt: row.createdAt ?? null,
-    parentMessageId: row.parentMessageId ?? null,
-    branchId: row.branchId ?? null,
-    branchIndex: row.branchIndex ?? null,
-    hasAlternateBranches: row.hasAlternateBranches ?? null,
-    alternateBranchCount: row.alternateBranchCount ?? null,
   }
 }
 
-export function serializeBranch(row: BranchRow) {
-  return {
-    id: pk(row),
-    sessionId: row.sessionId ?? "",
-    name: row.name ?? "",
-    isDefault: Boolean(row.isDefault),
-    anchorMessageId: row.anchorMessageId ?? null,
-    headMessageId: row.headMessageId ?? null,
-    summary: row.summary ?? "",
-    updatedTime: row.updatedAt ?? null,
-  }
+/* ------------------------------------------------------------------ */
+/* Knowledge graph reads (per document)                                 */
+/* ------------------------------------------------------------------ */
+
+export async function getDocEntities(docId: string): Promise<EntityRow[]> {
+  return searchObjects<EntityRow>("OrbitDocsEntitiesCanonical", {
+    where: { type: "eq", field: "documentId", value: docId },
+    pageSize: 1000,
+    maxItems: 5000,
+  })
 }
 
-/** Walk parent links back from the branch head (PoC linearize_branch_path). */
-export function linearizeBranchPath(
-  messages: MessageRow[],
-  branch: BranchRow | undefined
-): MessageRow[] {
-  const head = branch?.headMessageId
-  if (!head) return []
-  const byId = new Map(messages.map((m) => [pk(m), m]))
-  const path: MessageRow[] = []
-  const visited = new Set<string>()
-  let currentId: string = String(head)
-  while (currentId && !visited.has(currentId)) {
-    visited.add(currentId)
-    const message = byId.get(currentId)
-    if (!message) break
-    path.push(message)
-    currentId = message.parentMessageId ? String(message.parentMessageId) : ""
-  }
-  return path.reverse()
-}
-
-export function serializeContent(
-  messages: MessageRow[],
-  session: SessionRow,
-  branches: BranchRow[]
-) {
-  const activeBranch = branches.find((b) => pk(b) === session.activeBranchId)
-  const ordered =
-    activeBranch && activeBranch.headMessageId
-      ? linearizeBranchPath(messages, activeBranch)
-      : [...messages].sort(byCreatedAt)
-  return {
-    messages: ordered.map(serializeMessage),
-    activeBranchId: session.activeBranchId ?? null,
-    defaultBranchId: session.defaultBranchId ?? null,
-    branches: branches.map(serializeBranch),
-  }
-}
-
-export function serializeDoc(
-  doc: DocRow,
-  {
-    sharedFolderNames,
-    indexStatus,
-    userEmail,
-  }: {
-    sharedFolderNames: Map<string, string[]>
-    indexStatus: Map<string, IndexStatusRow>
-    userEmail: string
-  }
-) {
-  const id = pk(doc)
-  const status = indexStatus.get(id)
-  const isIndexed = status?.isIndexingComplete ?? Boolean(doc.isIndexed)
-  const mediaReference = extractMediaItemRid(doc.reference)
-  return {
-    primaryKey: id,
-    documentName: doc.documentName ?? "Untitled document",
-    addedBy: normalizeEmail(doc.addedBy),
-    isActive: doc.isActive !== false,
-    isIndexed,
-    isSharedFromFolder:
-      normalizeEmail(doc.addedBy) !== normalizeEmail(userEmail) &&
-      sharedFolderNames.has(id),
-    sharedFolderNames: sharedFolderNames.get(id) ?? [],
-    createdAt: doc.createdAt ?? null,
-    // PoC precedence: the doc row's own page count wins; the index-status
-    // row only fills in when the doc predates page counting.
-    noPages: doc.noPages ?? status?.noPages ?? null,
-    indexStatus: status
-      ? {
-          isIndexingComplete: Boolean(status.isIndexingComplete),
-          embeddingCount: status.embeddingCount ?? null,
-          lastUpdated: status.lastUpdated ?? null,
-          noPages: status.noPages ?? null,
-        }
-      : null,
-    isVLM: Boolean(doc.vlm),
-    sourceType: doc.sourceType ?? null,
-    sourceWebUrl: doc.sourceWebUrl ?? null,
-    sourceSyncConfigPk: doc.sourceSyncConfigPk ?? null,
-    mediaItemRid: mediaReference,
-  }
-}
-
-/** Pull the media item RID out of a MediaReference property value. */
-export function extractMediaItemRid(reference: unknown): string | null {
-  if (!reference || typeof reference !== "object") return null
-  const ref = reference as Record<string, unknown>
-  const inner = (ref.reference ?? ref) as Record<string, unknown>
-  const candidates = [
-    inner.mediaItemRid,
-    (inner.reference as Record<string, unknown> | undefined)?.mediaItemRid,
-  ]
-  for (const candidate of candidates) {
-    if (typeof candidate === "string" && candidate.startsWith("ri.")) {
-      return candidate
-    }
-  }
-  // deep fallback: find any ri.mio…media-item rid in the structure
-  const text = JSON.stringify(reference)
-  const match = text.match(/ri\.mio\.[a-z-]*\.media-item\.[a-zA-Z0-9-]+/)
-  return match ? match[0] : null
-}
-
-export function serializeFolder(row: FolderRow) {
-  return {
-    primaryKey: pk(row),
-    name: row.name ?? "Folder",
-    color: row.color ?? null,
-    createdBy: normalizeEmail(row.createdBy),
-    accessEmails: (row.accessEmails ?? []).map(normalizeEmail),
-    contents: (row.contents ?? []).map(String),
-    updatedAt: row.updatedAt ?? null,
-    isSyncManaged: Boolean(row.isSyncManaged),
-    sourceSyncConfigPk: row.sourceSyncConfigPk ?? null,
-  }
-}
-
-export function serializeSyncSource(row: SyncSourceRow) {
-  return {
-    primaryKey: pk(row),
-    displayName: row.displayName ?? "Sync source",
-    localRootPath: row.localRootPath ?? null,
-    isActive: row.isActive !== false,
-    lastSyncStatus: row.lastSyncStatus ?? null,
-    lastSyncCompletedAt: row.lastSyncCompletedAt ?? null,
-    errorCount: row.errorCount ?? 0,
-    sourceWebUrl: row.sourceWebUrl ?? null,
-    ownerEmail: normalizeEmail(row.ownerEmail),
-    sharedWith: (row.sharedWith ?? []).flatMap((e) => {
-      const email = normalizeEmail(e)
-      return email ? [email] : []
-    }),
-  }
-}
-
-export function foundryUserEmail(): string {
-  return getFoundryConfig().userEmail
+export async function getDocRelationships(
+  docId: string
+): Promise<RelationshipRow[]> {
+  return searchObjects<RelationshipRow>("OrbitDocsRelationships", {
+    where: { type: "eq", field: "documentId", value: docId },
+    pageSize: 1000,
+    maxItems: 5000,
+  })
 }

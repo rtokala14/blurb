@@ -2,51 +2,58 @@ import "server-only"
 
 import {
   createAipSession,
-  getAipSessionContent,
-  getSessionTrace,
+  FoundryError,
   streamingContinue,
 } from "./client"
 import { getFoundryConfig } from "./config"
 import { buildDocSkillPrompt, getDocSkill } from "@/lib/docgen/skills"
+import { complete } from "./llm-proxy"
 import { personaPreambleForId } from "@/lib/personas"
 import {
-  createBranchRow,
   createMessageRow,
-  getSessionBranches,
+  getDocsByIds,
   getSessionMessages,
+  getSessionRow,
+  listDocsInFolders,
   pk,
-  updateBranchRow,
+  resolveChunkOwnerIds,
+  sessionOptions,
   updateSessionRow,
-  type BranchRow,
   type MessageRow,
   type SessionRow,
 } from "./ontology"
 import {
+  buildParameterInputs,
   buildSummaryPrompt,
   buildTitlePrompt,
+  composeTurnInput,
   encodeStreamError,
-  normalizeMode,
   normalizeTitle,
-  prepareTurnRequest,
   STREAM_ERROR_PREFIX,
+  type TurnScope,
 } from "./turn"
 
 /**
- * One agent turn: persist the user message, stream the assistant reply
- * straight through, then persist the reply and run state. Mirrors the PoC's
- * /api/sessions/{id}/continue.
+ * One v3 agent turn, driven via the AIP platform Sessions API:
+ *  1. persist the user message (parent = active leaf, or an explicit parent
+ *     for branch/regenerate turns),
+ *  2. reuse (or create) the chat session's AIP session and call
+ *     streamingContinue with the Files/Folders objectSet parameters,
+ *  3. pipe the token stream straight through to the client while collecting,
+ *  4. persist the assistant message as the user message's child and repoint
+ *     the session's activeLeafMessageId at it.
+ *
+ * Errors travel in-band with the __orbit_stream_error__ sentinel — the
+ * client protocol is unchanged from the PoC.
  */
 
 export interface RunTurnParams {
   session: SessionRow
   userEmail: string
   userInput: string
-  mode?: string | null
-  branchId?: string | null
+  /** parent for the new user message; defaults to the active leaf */
   parentMessageId?: string | null
-  messageId?: string | null
-  sessionTraceId?: string | null
-  scopedDocIds: string[]
+  scope: TurnScope
   /** optional persona attached to this session (built-in registry id) */
   personaId?: string | null
   /** optional document skill pack — turns this into a generation turn */
@@ -57,102 +64,172 @@ export interface RunTurnResult {
   stream: ReadableStream<Uint8Array>
 }
 
-export async function runSessionTurn(params: RunTurnParams): Promise<RunTurnResult> {
-  const cfg = getFoundryConfig()
-  const sessionId = pk(params.session)
-  const requestedMode = normalizeMode(params.mode ?? params.session.mode)
+/** AIP session reuse: recreate when the stored session went away/expired. */
+function isSessionGone(error: unknown): boolean {
+  if (!(error instanceof FoundryError)) return false
+  return (
+    error.status === 404 ||
+    /SessionNotFound|SessionExpired/i.test(error.detail ?? "")
+  )
+}
 
-  const [persistedMessages, branches] = await Promise.all([
-    getSessionMessages(sessionId),
-    getSessionBranches(sessionId),
-  ])
-  const targetBranchId =
-    params.branchId || params.session.activeBranchId || undefined
-  const targetBranch = branches.find((b) => pk(b) === targetBranchId)
-  const parentMessageId =
-    params.parentMessageId || targetBranch?.headMessageId || undefined
-
-  const turn = prepareTurnRequest({
-    mode: requestedMode,
-    summary: params.session.summary,
-    persistedMessages: persistedMessages.map((m) => ({
-      id: pk(m),
-      isAgent: Boolean(m.isAgent),
-      message: m.message ?? "",
-      createdAt: m.createdAt,
-    })),
-    userInput: params.userInput,
-    userDocs: params.scopedDocIds,
-    ontology: cfg.ontology,
-    agents: { primary: cfg.agents.primary, thinking: cfg.agents.thinking },
-    pinnedAgentRid: params.session.currentAgentRid,
-    pinnedAgentVersion: params.session.currentAgentVersion,
-    personaPreamble: personaPreambleForId(params.personaId),
-    docSkillPrompt: (() => {
-      const skill = getDocSkill(params.docSkillId)
-      return skill ? buildDocSkillPrompt(skill) : undefined
-    })(),
-  })
-
-  // AIP session creation is a slow network call independent of persistence —
-  // run them concurrently (PoC optimization).
-  const aipSessionPromise = createAipSession(turn.agentRid, turn.agentVersion)
-
-  const userMessageId = await createMessageRow({
-    sessionId,
-    message: params.userInput.trim(),
-    isAgent: false,
-    mode: requestedMode,
-    branchId: targetBranchId,
-    parentMessageId,
-    branchIndex: persistedMessages.length,
-  })
-  if (targetBranch) {
-    await updateBranchRow(targetBranch, { headMessageId: userMessageId })
+async function openTurnStream(
+  agentSessionRid: string | undefined,
+  input: {
+    userInput: string
+    parameterInputs: Record<string, unknown>
   }
+): Promise<{ upstream: Response; sessionRid: string }> {
+  const cfg = getFoundryConfig()
+  let sessionRid = agentSessionRid?.trim() || ""
+  if (!sessionRid) {
+    sessionRid = (await createAipSession(cfg.agentRid)).rid
+  }
+  const attempt = () =>
+    streamingContinue({
+      agentRid: cfg.agentRid,
+      sessionRid,
+      userInput: input.userInput,
+      parameterInputs: input.parameterInputs,
+      messageId: crypto.randomUUID(),
+      sessionTraceId: crypto.randomUUID(),
+    })
+  let upstream = await attempt()
+  if (!upstream.ok && agentSessionRid) {
+    // Stored AIP session may have expired — retry once on a fresh session.
+    const detail = await upstream.text().catch(() => "")
+    if (
+      upstream.status === 404 ||
+      /SessionNotFound|SessionExpired/i.test(detail)
+    ) {
+      sessionRid = (await createAipSession(cfg.agentRid)).rid
+      upstream = await attempt()
+    } else {
+      throw new FoundryError(
+        `Agent turn failed (${upstream.status})`,
+        upstream.status,
+        detail.slice(0, 2000)
+      )
+    }
+  }
+  return { upstream, sessionRid }
+}
 
-  const aipSession = await aipSessionPromise
-  const messageId = params.messageId || crypto.randomUUID()
-  const traceId = params.sessionTraceId || crypto.randomUUID()
+/**
+ * Translate the UI scope into the identities the agent's retrieval joins on.
+ * Chunk attribution keys by the pipeline's documentId (fileName for
+ * pipeline-registered rows), not the app's UUID DocMeta id, so the Files
+ * objectSet must reference the chunk-owning rows or the agent sees no
+ * chunks. Folder scope is expanded to its docs here for the same reason:
+ * the chunk-owning rows sit in folder-root, not the user's folders, so
+ * first-party Folders scoping cannot reach them. On any resolution failure
+ * the raw scope is passed through — degraded retrieval beats a failed turn.
+ */
+async function buildRetrievalScope(
+  scope: TurnScope,
+  userEmail: string
+): Promise<TurnScope> {
+  try {
+    const [docsById, folderDocs] = await Promise.all([
+      getDocsByIds(scope.documentIds),
+      listDocsInFolders(scope.folderIds, userEmail),
+    ])
+    const owners = await resolveChunkOwnerIds([
+      ...docsById.values(),
+      ...folderDocs,
+    ])
+    const documentIds = [
+      ...new Set([
+        ...scope.documentIds.map((id) => owners.get(id) ?? id),
+        ...folderDocs.map((doc) => owners.get(pk(doc)) ?? pk(doc)),
+      ]),
+    ]
+    return { documentIds, folderIds: scope.folderIds }
+  } catch {
+    return scope
+  }
+}
 
-  await updateSessionRow(sessionId, {
-    mode: requestedMode,
-    currentAgentRid: turn.agentRid,
-    currentAgentVersion: aipSession.agentVersion ?? turn.agentVersion ?? undefined,
-    currentSessionId: aipSession.rid,
-    currentMessageId: messageId,
-    currentSessionTraceId: traceId,
-    currentRunStatus: "in_progress",
-    currentRunError: undefined,
-    activeBranchId: targetBranchId,
-    updatedAt: new Date().toISOString(),
-  })
-
-  const upstream = await streamingContinue({
-    agentRid: turn.agentRid,
-    sessionRid: aipSession.rid,
-    userInput: turn.userInput,
-    parameterInputs: turn.parameterInputs,
-    messageId,
-    sessionTraceId: traceId,
-  })
-
+export async function runSessionTurn(
+  params: RunTurnParams
+): Promise<RunTurnResult> {
+  const cfg = getFoundryConfig()
+  const session = params.session
+  const sessionId = pk(session)
+  const options = sessionOptions(session)
   const encoder = new TextEncoder()
   const decoder = new TextDecoder()
 
-  if (!upstream.ok || !upstream.body) {
-    const detail = await upstream.text().catch(() => "")
-    await persistFailedRun(sessionId, detail || `HTTP ${upstream.status}`)
+  /* undefined = continue from the active leaf; an explicit null/"" is a
+     root turn (regenerate / edit-and-resend of the session's first message)
+     and must NOT fall through to the leaf, or the new branch mis-parents. */
+  const parentMessageId =
+    params.parentMessageId === undefined
+      ? (session.activeLeafMessageId ?? "")
+      : (params.parentMessageId ?? "")
+
+  const userMessageId = await createMessageRow({
+    sessionId,
+    role: "user",
+    content: params.userInput.trim(),
+    parentMessageId,
+    scope: params.scope,
+  })
+
+  await updateSessionRow(session, {
+    activeLeafMessageId: userMessageId,
+    options: {
+      currentRun: {
+        status: "in_progress",
+        messageId: userMessageId,
+        startedAt: new Date().toISOString(),
+      },
+    },
+  })
+
+  const skill = getDocSkill(params.docSkillId)
+  const input = composeTurnInput({
+    userInput: params.userInput,
+    personaPreamble: personaPreambleForId(params.personaId),
+    docSkillPrompt: skill ? buildDocSkillPrompt(skill) : undefined,
+  })
+  const parameterInputs = buildParameterInputs(
+    await buildRetrievalScope(params.scope, params.userEmail),
+    cfg.ontology
+  )
+
+  const failTurn = async (message: string): Promise<RunTurnResult> => {
+    await persistFailedRun(sessionId, params.userEmail, message)
     return {
       stream: new ReadableStream({
         start(controller) {
-          controller.enqueue(
-            encoder.encode(encodeStreamError(detail || `HTTP ${upstream.status}`))
-          )
+          controller.enqueue(encoder.encode(encodeStreamError(message)))
           controller.close()
         },
       }),
     }
+  }
+
+  let opened: Awaited<ReturnType<typeof openTurnStream>>
+  try {
+    opened = await openTurnStream(options.agentSessionRid, {
+      userInput: input,
+      parameterInputs,
+    })
+  } catch (error) {
+    const message =
+      error instanceof FoundryError
+        ? `${error.message}${error.detail ? ` — ${error.detail}` : ""}`
+        : error instanceof Error
+          ? error.message
+          : String(error)
+    return failTurn(message)
+  }
+
+  const { upstream, sessionRid } = opened
+  if (!upstream.ok || !upstream.body) {
+    const detail = await upstream.text().catch(() => "")
+    return failTurn(detail || `HTTP ${upstream.status}`)
   }
 
   const upstreamBody = upstream.body
@@ -173,7 +250,7 @@ export async function runSessionTurn(params: RunTurnParams): Promise<RunTurnResu
         collected += decoder.decode()
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        await persistFailedRun(sessionId, message)
+        await persistFailedRun(sessionId, params.userEmail, message)
         controller.enqueue(encoder.encode(encodeStreamError(message)))
         controller.close()
         return
@@ -182,35 +259,46 @@ export async function runSessionTurn(params: RunTurnParams): Promise<RunTurnResu
       try {
         const finalText = collected.trim()
         if (finalText.startsWith(STREAM_ERROR_PREFIX)) {
-          await persistFailedRun(sessionId, finalText.slice(STREAM_ERROR_PREFIX.length))
+          await persistFailedRun(
+            sessionId,
+            params.userEmail,
+            finalText.slice(STREAM_ERROR_PREFIX.length)
+          )
         } else if (finalText) {
           const agentMessageId = await createMessageRow({
             sessionId,
-            message: finalText,
-            isAgent: true,
-            mode: requestedMode,
-            branchId: targetBranchId,
+            role: "assistant",
+            content: finalText,
             parentMessageId: userMessageId,
-            branchIndex: persistedMessages.length + 1,
+            scope: params.scope,
+            model: cfg.agentRid,
           })
-          if (targetBranch) {
-            await updateBranchRow(targetBranch, { headMessageId: agentMessageId })
-          }
-          await updateSessionRow(sessionId, {
-            currentRunStatus: "idle",
-            currentRunError: undefined,
-            currentMessageId: undefined,
-            currentSessionTraceId: undefined,
-            activeBranchId: targetBranchId,
-            updatedAt: new Date().toISOString(),
+          // Re-read so the leaf/options merge is against current state.
+          const fresh =
+            (await getSessionRow(sessionId, params.userEmail)) ?? session
+          await updateSessionRow(fresh, {
+            activeLeafMessageId: agentMessageId,
+            options: {
+              agentSessionRid: sessionRid,
+              currentRun: { status: "idle" },
+            },
           })
-          // Fire-and-forget: summary + auto-title via the metadata agent.
-          void refreshSessionMetadata(sessionId).catch(() => undefined)
+          void refreshSessionMetadata(sessionId, params.userEmail).catch(
+            () => undefined
+          )
+        } else {
+          await persistFailedRun(
+            sessionId,
+            params.userEmail,
+            "Agent returned an empty response"
+          )
         }
       } catch {
-        // Persistence failure after a successful stream: mark run failed so
-        // the run endpoint can recover from AIP session content.
-        await persistFailedRun(sessionId, "Failed to persist assistant reply")
+        await persistFailedRun(
+          sessionId,
+          params.userEmail,
+          "Failed to persist assistant reply"
+        )
       }
       controller.close()
     },
@@ -224,89 +312,48 @@ export async function runSessionTurn(params: RunTurnParams): Promise<RunTurnResu
 
 export async function persistFailedRun(
   sessionId: string,
+  userEmail: string,
   errorMessage: string
 ): Promise<void> {
-  await updateSessionRow(sessionId, {
-    currentRunStatus: "failed",
-    currentRunError: errorMessage.slice(0, 4000),
-    updatedAt: new Date().toISOString(),
+  const session = await getSessionRow(sessionId, userEmail).catch(() => null)
+  if (!session) return
+  await updateSessionRow(session, {
+    options: {
+      currentRun: {
+        status: "failed",
+        error: errorMessage.slice(0, 4000),
+      },
+    },
   }).catch(() => undefined)
 }
 
 /* ------------------------------------------------------------------ */
-/* Run recovery (PoC GET /api/sessions/{id}/run)                        */
+/* Run status (GET /api/orbit/sessions/{id}/run)                        */
 /* ------------------------------------------------------------------ */
 
-export async function getRunStatus(session: SessionRow) {
-  const payload = (status?: string, traceStatus?: string | null) => ({
-    status: status ?? session.currentRunStatus ?? "idle",
+/** Runs stuck in_progress longer than this are reported failed. */
+const RUN_STALE_MS = 6 * 60_000
+
+export function getRunStatus(session: SessionRow) {
+  const run = sessionOptions(session).currentRun ?? {}
+  let status = run.status ?? "idle"
+  if (status === "in_progress") {
+    const startedAt = Date.parse(run.startedAt ?? "")
+    if (Number.isFinite(startedAt) && Date.now() - startedAt > RUN_STALE_MS) {
+      status = "failed"
+    }
+  }
+  return {
+    status,
     sessionId: pk(session),
-    agentRid: session.currentAgentRid ?? null,
-    agentVersion: session.currentAgentVersion ?? null,
-    currentSessionId: session.currentSessionId ?? null,
-    messageId: session.currentMessageId ?? null,
-    sessionTraceId: session.currentSessionTraceId ?? null,
-    traceStatus: traceStatus ?? null,
-    error: session.currentRunError ?? null,
-  })
-
-  if ((session.currentRunStatus ?? "idle") !== "in_progress") return payload()
-
-  if (
-    !session.currentAgentRid ||
-    !session.currentSessionId ||
-    !session.currentSessionTraceId
-  ) {
-    return payload("in_progress")
+    messageId: run.messageId ?? null,
+    error: run.error ?? null,
+    activeLeafMessageId: session.activeLeafMessageId || null,
   }
-  const trace = await getSessionTrace(
-    session.currentAgentRid,
-    session.currentSessionId,
-    session.currentSessionTraceId
-  )
-  if (!trace) return payload("in_progress")
-  if (trace.status === "COMPLETE") {
-    await finalizeCompletedRun(session)
-    return payload("complete", "COMPLETE")
-  }
-  return payload("in_progress", trace.status ?? null)
-}
-
-/** Recover the assistant reply from AIP session content after a dropped stream. */
-async function finalizeCompletedRun(session: SessionRow): Promise<void> {
-  const sessionId = pk(session)
-  if (!session.currentAgentRid || !session.currentSessionId) return
-  const content = await getAipSessionContent(
-    session.currentAgentRid,
-    session.currentSessionId
-  )
-  const exchanges = content?.exchanges ?? []
-  const lastExchange = exchanges[exchanges.length - 1]
-  const messages = await getSessionMessages(sessionId)
-  const latest = messages[messages.length - 1]
-  if (lastExchange && !(latest && latest.isAgent)) {
-    await createMessageRow({
-      sessionId,
-      message: lastExchange.result?.agentMarkdownResponse ?? "",
-      isAgent: true,
-      mode: normalizeMode(session.mode),
-      branchId: session.activeBranchId ?? undefined,
-      parentMessageId: latest ? pk(latest) : undefined,
-      branchIndex: messages.length,
-    })
-  }
-  await updateSessionRow(sessionId, {
-    currentRunStatus: "idle",
-    currentRunError: undefined,
-    currentMessageId: undefined,
-    currentSessionTraceId: undefined,
-    updatedAt: new Date().toISOString(),
-  })
-  void refreshSessionMetadata(sessionId).catch(() => undefined)
 }
 
 /* ------------------------------------------------------------------ */
-/* Session metadata refresh (summary + auto-title)                      */
+/* Session metadata refresh (summary + auto-title via LLM proxy)        */
 /* ------------------------------------------------------------------ */
 
 const TRANSCRIPT_LIMIT = 120_000
@@ -315,8 +362,8 @@ function serializeTranscript(messages: MessageRow[]): string {
   const lines: string[] = []
   let total = 0
   for (const message of messages) {
-    const role = message.isAgent ? "Assistant" : "User"
-    const entry = `${role}:\n${(message.message ?? "").trim()}\n`
+    const role = message.role === "assistant" ? "Assistant" : "User"
+    const entry = `${role}:\n${(message.content ?? "").trim()}\n`
     if (total + entry.length > TRANSCRIPT_LIMIT) {
       lines.push("[Transcript truncated to stay within the summarization limit.]")
       break
@@ -327,82 +374,43 @@ function serializeTranscript(messages: MessageRow[]): string {
   return lines.join("\n").trim()
 }
 
-async function generateAgentText(prompt: string): Promise<string | null> {
+async function generateText(prompt: string): Promise<string | null> {
   const cfg = getFoundryConfig()
-  const session = await createAipSession(
-    cfg.agents.metadata,
-    cfg.agents.metadataVersion
-  )
-  const response = await streamingContinue({
-    agentRid: cfg.agents.metadata,
-    sessionRid: session.rid,
-    userInput: prompt,
-    messageId: crypto.randomUUID(),
-    sessionTraceId: crypto.randomUUID(),
-  })
-  if (!response.ok || !response.body) return null
-  const text = (await response.text()).trim()
-  if (!text || text.startsWith(STREAM_ERROR_PREFIX)) return null
-  return text
+  try {
+    const text = await complete({
+      provider: cfg.llmProxy.metadataProvider,
+      model: cfg.llmProxy.metadataModel,
+      // reasoning models spend tokens thinking before the (short) answer —
+      // give headroom so titles/summaries aren't truncated to empty.
+      maxTokens: 1536,
+      messages: [{ role: "user", content: prompt }],
+    })
+    return text.trim() || null
+  } catch {
+    return null
+  }
 }
 
-export async function refreshSessionMetadata(sessionId: string): Promise<void> {
-  const { getObject } = await import("./client")
-  const session = await getObject<SessionRow>("OrbitDocsUserSessions", sessionId)
+export async function refreshSessionMetadata(
+  sessionId: string,
+  userEmail: string
+): Promise<void> {
+  const session = await getSessionRow(sessionId, userEmail)
   if (!session) return
   const messages = await getSessionMessages(sessionId)
   const transcript = serializeTranscript(messages)
   if (!transcript) return
 
-  const fields: Record<string, unknown> = {}
-  const summary = await generateAgentText(buildSummaryPrompt(transcript)).catch(
-    () => null
-  )
-  if (summary !== null) fields.summary = summary.trim()
+  const fields: { summary?: string; title?: string } = {}
+  const summary = await generateText(buildSummaryPrompt(transcript))
+  if (summary !== null) fields.summary = summary
 
   if ((session.title || "New chat") === "New chat") {
-    const title = await generateAgentText(
-      buildTitlePrompt(transcript.slice(0, 12_000))
-    ).catch(() => null)
+    const title = await generateText(buildTitlePrompt(transcript.slice(0, 12_000)))
     if (title !== null) fields.title = normalizeTitle(title)
   }
 
   if (Object.keys(fields).length === 0) return
-  fields.updatedAt = new Date().toISOString()
-  await updateSessionRow(sessionId, fields)
-}
-
-/* ------------------------------------------------------------------ */
-/* Branch bootstrap for legacy sessions                                 */
-/* ------------------------------------------------------------------ */
-
-/**
- * Light version of the PoC's branching repair: guarantee a main branch
- * exists (non-destructive; skips per-message lineage rewrites).
- */
-export async function ensureMainBranch(
-  session: SessionRow,
-  userEmail: string
-): Promise<{ session: SessionRow; branches: BranchRow[] }> {
-  let branches = await getSessionBranches(pk(session))
-  let current = session
-  if (branches.length === 0) {
-    const messages = await getSessionMessages(pk(session))
-    const last = messages[messages.length - 1]
-    const branchId = await createBranchRow({
-      sessionId: pk(session),
-      createdBy: userEmail,
-      name: "main",
-      isDefault: true,
-      anchorMessageId: last ? pk(last) : null,
-    })
-    current =
-      (await updateSessionRow(pk(session), {
-        activeBranchId: branchId,
-        defaultBranchId: branchId,
-        updatedAt: new Date().toISOString(),
-      })) ?? session
-    branches = await getSessionBranches(pk(session))
-  }
-  return { session: current, branches }
+  const fresh = (await getSessionRow(sessionId, userEmail)) ?? session
+  await updateSessionRow(fresh, fields)
 }

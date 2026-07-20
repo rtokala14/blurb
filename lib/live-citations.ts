@@ -1,13 +1,18 @@
 /**
- * Parses the agent's inline citation tags into the UI's marker format.
+ * Parses the agent's inline citations into the UI's marker format.
  *
- * The Foundry agent emits citations as:
+ * Two wire formats are supported (the agent's emission style changed with
+ * its model/config, and old persisted messages still carry the first):
+ *
  *   <source id="ri.mio.main.media-item.xxx" name="Document Title" text="quote">12</source>
- * where the inner text is a page ("12"), range ("2-3"), or list ("1, 4, 9").
+ *     where the inner text is a page ("12"), range ("2-3"), or list ("1, 4, 9");
+ *
+ *   【{"type":"citation","doc":"AIML1.pdf","name":"AIML1.pdf","page":3,"quote":"…"}】
+ *     JSON in CJK brackets — carries the document name but no media RID
+ *     (consumers resolve the RID from the docs store by name).
  *
  * The UI renders citations as numbered chips via ⟦n⟧ markers, so this module
- * converts tags → markers plus a citations array carrying the media RID.
- * Pure functions — unit-tested.
+ * converts both forms → markers plus a citations array. Pure — unit-tested.
  */
 
 export interface LiveCitation {
@@ -28,6 +33,16 @@ export interface ParsedLiveMessage {
 
 const SOURCE_TAG_RE = /<source\b([^>]*)>([\s\S]*?)<\/source>/gi
 const ATTR_RE = /([a-zA-Z-]+)\s*=\s*"([^"]*)"/g
+const BRACKET_CITE_RE = /【\s*(\{[\s\S]*?\})\s*】/g
+
+interface BracketCitation {
+  type?: string
+  doc?: string
+  name?: string
+  page?: number | string
+  pages?: string
+  quote?: string
+}
 
 export function parseFirstPage(raw: string): number {
   const match = raw.trim().match(/^(\d+)/)
@@ -51,11 +66,24 @@ function parseAttrs(attrText: string): Record<string, string> {
 
 /**
  * Convert a complete live message into marker-ized content + citations.
- * Identical (mediaRid, pages) pairs are deduplicated to one number.
+ * Identical (source, pages) pairs are deduplicated to one number.
  */
 export function parseLiveMessage(raw: string): ParsedLiveMessage {
   const citations: LiveCitation[] = []
   const seen = new Map<string, number>()
+
+  const marker = (
+    key: string,
+    make: (n: number) => LiveCitation
+  ): string => {
+    let n = seen.get(key)
+    if (n === undefined) {
+      n = citations.length + 1
+      seen.set(key, n)
+      citations.push(make(n))
+    }
+    return `⟦${n}⟧`
+  }
 
   const content = raw
     .replace(SOURCE_TAG_RE, (_full, attrText: string, pagesText: string) => {
@@ -63,21 +91,39 @@ export function parseLiveMessage(raw: string): ParsedLiveMessage {
       const mediaRid = (attrs.id ?? "").trim()
       if (!mediaRid) return ""
       const pages = pagesText.trim() || "0"
-      const key = `${mediaRid}#${pages}`
-      let n = seen.get(key)
-      if (n === undefined) {
-        n = citations.length + 1
-        seen.set(key, n)
-        citations.push({
-          n,
-          mediaRid,
-          docName: attrs.name?.trim() || "Source document",
-          pages,
-          firstPage: parseFirstPage(pages),
-          quote: attrs.text?.trim() || undefined,
-        })
+      return marker(`${mediaRid}#${pages}`, (n) => ({
+        n,
+        mediaRid,
+        docName: attrs.name?.trim() || "Source document",
+        pages,
+        firstPage: parseFirstPage(pages),
+        quote: attrs.text?.trim() || undefined,
+      }))
+    })
+    .replace(BRACKET_CITE_RE, (full, jsonText: string) => {
+      let payload: BracketCitation
+      try {
+        payload = JSON.parse(jsonText) as BracketCitation
+      } catch {
+        return full
       }
-      return `⟦${n}⟧`
+      // Only rewrite genuine citation payloads; any other bracketed JSON
+      // (or plain CJK-bracketed prose) passes through untouched.
+      if (payload?.type !== "citation") return full
+      const docName = String(payload.name ?? payload.doc ?? "").trim()
+      if (!docName) return ""
+      const pages = String(payload.pages ?? payload.page ?? "").trim() || "0"
+      return marker(`${docName}#${pages}`, (n) => ({
+        n,
+        mediaRid: "",
+        docName,
+        pages,
+        firstPage: parseFirstPage(pages),
+        quote:
+          typeof payload.quote === "string" && payload.quote.trim()
+            ? payload.quote.trim()
+            : undefined,
+      }))
     })
     .replace(/[ \t]{2,}/g, " ")
 
@@ -85,8 +131,9 @@ export function parseLiveMessage(raw: string): ParsedLiveMessage {
 }
 
 /**
- * Streaming-safe view: marker-izes complete tags and hides any trailing
- * partial `<source …` fragment so tags never flash as raw text mid-stream.
+ * Streaming-safe view: marker-izes complete citations and hides any trailing
+ * partial `<source …` / `【…` fragment so they never flash as raw text
+ * mid-stream.
  */
 export function parseStreamingLiveText(raw: string): ParsedLiveMessage {
   // Cut at the last possibly-incomplete tag opening that has no closing tag.
@@ -99,16 +146,29 @@ export function parseStreamingLiveText(raw: string): ParsedLiveMessage {
     const partial = raw.match(/<(?:s(?:o(?:u(?:r(?:c(?:e)?)?)?)?)?)?$/)
     if (partial && partial.index !== undefined) safe = raw.slice(0, partial.index)
   }
+  // Same for a bracket citation still streaming in.
+  const lastBracket = safe.lastIndexOf("【")
+  if (lastBracket !== -1 && !safe.slice(lastBracket).includes("】")) {
+    safe = safe.slice(0, lastBracket)
+  }
   // Trim whitespace only when we actually truncated a partial tag, so the
   // visible text doesn't end with a dangling space while the tag streams in.
   if (safe.length !== raw.length) safe = safe.replace(/\s+$/, "")
   return parseLiveMessage(safe)
 }
 
-/** Strip citation tags entirely (for exports/copy of live content). */
+/** Strip citation markup entirely (for exports/copy of live content). */
 export function stripSourceTags(content: string): string {
   return content
     .replace(/<source[^>]*>[\s\S]*?<\/source>/gi, "")
+    .replace(BRACKET_CITE_RE, (full, jsonText: string) => {
+      try {
+        const payload = JSON.parse(jsonText) as BracketCitation
+        return payload?.type === "citation" ? "" : full
+      } catch {
+        return full
+      }
+    })
     .replace(/[ \t]{2,}/g, " ")
     .replace(/ +([.,;:])/g, "$1")
     .trim()

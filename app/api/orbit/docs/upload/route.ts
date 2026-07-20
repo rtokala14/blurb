@@ -1,13 +1,11 @@
 import { PDFDocument } from "pdf-lib"
 
-import { uploadMedia } from "@/lib/foundry/client"
+import { extractMediaItemRid, uploadMedia } from "@/lib/foundry/client"
 import {
   createDocRow,
-  emailWhere,
   normalizeEmail,
-  type DocRow,
+  searchAccessibleDocs,
 } from "@/lib/foundry/ontology"
-import { searchObjects } from "@/lib/foundry/client"
 import { errorResponse, json, requireLive } from "@/lib/foundry/http"
 import { getProvisionedUser, resolveRequestUser } from "@/lib/foundry/user"
 import {
@@ -20,23 +18,24 @@ export const dynamic = "force-dynamic"
 export const maxDuration = 120
 
 /**
- * PDF upload pipeline (PoC POST /api/docs/upload):
- * duplicate-name check → media set upload → create-orbit-docs-list action.
- * Foundry pipelines index asynchronously; the client polls /docs/status.
+ * PDF upload pipeline: reserve quota → duplicate-name check → media upload →
+ * create-doc-meta action. Foundry indexes asynchronously; the client polls
+ * /docs/status. Page count is computed with pdf-lib for the response payload
+ * only (noPages is not stored in v3).
  *
- * Office formats (.docx/.pptx/.xlsx) are converted with LibreOffice in the
- * PoC backend; that dependency isn't available here, so non-PDFs get a clear
- * 415 asking for PDF. Page count is computed server-side with pdf-lib
- * (client hints ignored, matching the PoC).
+ * Office formats aren't converted here (no LibreOffice dependency); non-PDFs
+ * get a clear 415 asking for PDF.
  */
 export async function POST(request: Request) {
   const guard = requireLive()
   if (guard) return guard
   try {
-    const userEmail = await resolveRequestUser(request)
+    const email = normalizeEmail(await resolveRequestUser(request))
     const form = await request.formData()
     const files = form.getAll("files").filter((f): f is File => f instanceof File)
     const names = form.getAll("names").map(String)
+    const folderField = form.get("folderId")
+    const folderId = folderField ? String(folderField).trim() || null : null
     if (files.length === 0) {
       return json({ error: "No files provided" }, { status: 400 })
     }
@@ -47,88 +46,78 @@ export async function POST(request: Request) {
       if (!isPdf) {
         return json(
           {
-            error: `"${file.name}" is not a PDF. Convert Office documents to PDF before uploading (the PoC's LibreOffice conversion service is not bundled here).`,
+            error: `"${file.name}" is not a PDF. Convert Office documents to PDF before uploading.`,
           },
           { status: 415 }
         )
       }
     }
 
-    // Duplicate-name check via an exact `in` filter on the requested names —
-    // a full owned-docs scan silently truncates at tenant scale (~19k rows)
-    // and misses duplicates.
     const requestedNames = files.map((file, i) => (names[i] || file.name).trim())
-    const existing = await searchObjects<DocRow>("OrbitDocsList", {
-      where: {
-        type: "and",
-        value: [
-          // case-insensitive owner match (mixed-case addedBy rows exist)
-          emailWhere("addedBy", userEmail),
-          { type: "eq", field: "isActive", value: true },
-          { type: "in", field: "documentName", value: requestedNames },
-        ],
-      },
-      select: ["documentName", "primaryKey_", "addedBy"],
-    })
-    const existingNames = new Set(
-      existing.map((d) => (d.documentName ?? "").trim().toLowerCase())
-    )
-    const duplicates = requestedNames.filter((name) =>
-      existingNames.has(name.toLowerCase())
-    )
-    if (duplicates.length > 0) {
-      return json(
-        { error: "Duplicate document names", duplicates },
-        { status: 409 }
-      )
-    }
 
-    // Daily quota (PoC upload_quota): reserve before the uploads start so
-    // concurrent requests can't blow past the limit; committed below.
+    // Reserve batch capacity before any uploads so concurrent requests can't
+    // blow past the daily limit. UploadNotAllowed/UploadQuotaExceeded surface
+    // via errorResponse (403/429).
     const reservationId = crypto.randomUUID()
-    const userRow = await getProvisionedUser(userEmail)
+    const userRow = await getProvisionedUser(email)
     if (userRow) {
       await reserveUploadCapacity(userRow, files.length, reservationId)
     }
 
-    const uploaded: { documentName: string; noPages: number }[] = []
     try {
-    // Each file is processed independently (read → parse → upload → row), so
-    // fan the batch out concurrently rather than one file at a time.
-    await Promise.all(
-      files.map(async (file, i) => {
-        const documentName = (names[i] || file.name).trim()
-        const bytes = await file.arrayBuffer()
-        const pdf = await PDFDocument.load(bytes, {
-          ignoreEncryption: true,
-          updateMetadata: false,
-        })
-        const noPages = pdf.getPageCount()
-
-        const safeStem = documentName
-          .replace(/\.pdf$/i, "")
-          .replace(/[^a-zA-Z0-9-_]+/g, "-")
-          .slice(0, 60)
-        const mediaItemPath = `uploads/${crypto.randomUUID().slice(0, 12)}_${safeStem}.pdf`
-        const reference = await uploadMedia(bytes, mediaItemPath)
-
-        await createDocRow({
-          documentName,
-          reference,
-          noPages,
-          addedBy: userEmail,
-        })
-        uploaded.push({ documentName, noPages })
-      })
-    )
-    } finally {
-      // record whatever made it up, even on partial failure
-      await commitUploadUsage(userEmail, uploaded.length, reservationId).catch(
-        () => releaseUploadCapacity(reservationId)
+      // Duplicate-name check: exact fileName match among accessible docs.
+      const dupResults = await Promise.all(
+        requestedNames.map((name) => searchAccessibleDocs(email, name))
       )
-    }
+      const duplicates = requestedNames.filter((name, i) =>
+        dupResults[i].some(
+          (doc) =>
+            (doc.fileName ?? "").trim().toLowerCase() === name.toLowerCase()
+        )
+      )
+      if (duplicates.length > 0) {
+        releaseUploadCapacity(reservationId)
+        return json(
+          { error: "Duplicate document names", duplicates },
+          { status: 409 }
+        )
+      }
 
-    return json({ success: true, uploaded })
+      // Each file is processed independently (read → parse → upload → row), so
+      // fan the batch out concurrently.
+      const uploaded: {
+        primaryKey: string
+        documentName: string
+        noPages: number
+      }[] = []
+      await Promise.all(
+        files.map(async (file, i) => {
+          const documentName = requestedNames[i]
+          const bytes = await file.arrayBuffer()
+          const pdf = await PDFDocument.load(bytes, {
+            ignoreEncryption: true,
+            updateMetadata: false,
+          })
+          const noPages = pdf.getPageCount()
+          const reference = await uploadMedia(bytes, documentName)
+          const primaryKey = await createDocRow({
+            fileName: documentName,
+            mime: "application/pdf",
+            mediaPath: `${crypto.randomUUID()}-${documentName}`,
+            mediaItemRid: extractMediaItemRid(reference) ?? "",
+            mediaReference: reference,
+            parentFolderId: folderId,
+            userEmail: email,
+          })
+          uploaded.push({ primaryKey, documentName, noPages })
+        })
+      )
+      commitUploadUsage(reservationId)
+      return json({ success: true, uploaded })
+    } catch (error) {
+      releaseUploadCapacity(reservationId)
+      throw error
+    }
   } catch (error) {
     return errorResponse(error)
   }

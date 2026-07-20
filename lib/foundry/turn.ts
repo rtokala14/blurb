@@ -1,20 +1,14 @@
 /**
- * Pure turn-preparation logic for AIP agent chats, ported from the PoC's
- * services/session_v2.py. No I/O — unit-testable.
+ * Pure turn-preparation logic for the v3 main agent. No I/O — unit-testable.
+ *
+ * The v3 pipeline has a single AIP Chatbot (no thinking mode) driven via the
+ * platform Sessions API. It takes two READ_ONLY objectSet parameters:
+ *   Files   — OrbitDocsDocMeta objects the agent may cite
+ *   Folders — OrbitDocsFolderRegistry objects (first-party folder scoping —
+ *             no client-side folder→file expansion needed)
+ * Conversation continuity lives in the AIP session (sessionRid), which the
+ * app stores per chat session and reuses across turns.
  */
-
-export const REGULAR_MODE = "regular"
-export const THINKING_MODE = "thinking"
-const LEGACY_DEEP_RESEARCH_MODE = "deep_research"
-
-export type ChatMode = typeof REGULAR_MODE | typeof THINKING_MODE
-
-export function normalizeMode(value: string | null | undefined): ChatMode {
-  if (value === THINKING_MODE || value === LEGACY_DEEP_RESEARCH_MODE) {
-    return THINKING_MODE
-  }
-  return REGULAR_MODE
-}
 
 export function normalizeTitle(value: string): string {
   const normalized = value.replace(/\s+/g, " ").trim()
@@ -22,97 +16,87 @@ export function normalizeTitle(value: string): string {
   return normalized.slice(0, 200)
 }
 
-export interface PersistedMessage {
-  id: string
-  isAgent: boolean
-  message: string
-  createdAt?: string | null
+export interface TurnScope {
+  documentIds: string[]
+  folderIds: string[]
 }
 
-function sortMessages<T extends PersistedMessage>(messages: T[]): T[] {
-  return [...messages].sort((a, b) => {
-    const ta = a.createdAt ?? ""
-    const tb = b.createdAt ?? ""
-    if (ta !== tb) return ta < tb ? -1 : 1
-    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
-  })
+/** ObjectSet of the given type filtered to the given primary keys. */
+function objectSetParam(
+  ontology: string,
+  objectType: string,
+  pkField: string,
+  ids: string[]
+): Record<string, unknown> | undefined {
+  const unique = [...new Set(ids.filter(Boolean))]
+  if (unique.length === 0) return undefined
+  return {
+    type: "objectSet",
+    ontology,
+    objectSet: {
+      type: "filter",
+      objectSet: { type: "base", objectType },
+      where: { type: "in", field: pkField, value: unique },
+    },
+  }
 }
 
 /**
- * Build the objectSet parameter scoping the agent to the selected documents.
- * Shape must match the PoC exactly (union of per-doc primaryKey filters).
+ * Build the agent's parameterInputs for one turn. Parameter names match the
+ * agent's configuration exactly ("Files", "Folders" — verified via the
+ * get-agent endpoint).
  */
 export function buildParameterInputs(
-  userDocs: string[],
-  {
-    mode,
-    compactContext = "",
-    ontology,
-  }: { mode: string; compactContext?: string; ontology: string }
+  scope: TurnScope,
+  ontology: string
 ): Record<string, unknown> {
   const parameterInputs: Record<string, unknown> = {}
-
-  if (userDocs.length > 0) {
-    parameterInputs.userDocs = {
-      type: "objectSet",
-      ontology,
-      objectSet: {
-        type: "union",
-        objectSets: userDocs.map((docId) => ({
-          type: "filter",
-          objectSet: { type: "base", objectType: "OrbitDocsList" },
-          where: { type: "eq", field: "primaryKey_", value: docId },
-        })),
-      },
-    }
-  }
-
-  if (normalizeMode(mode) === THINKING_MODE && compactContext.trim()) {
-    parameterInputs.prevContext = { type: "string", value: compactContext }
-  }
-
+  const files = objectSetParam(
+    ontology,
+    "OrbitDocsDocMeta",
+    "documentId",
+    scope.documentIds
+  )
+  const folders = objectSetParam(
+    ontology,
+    "OrbitDocsFolderRegistry",
+    "folderId",
+    scope.folderIds
+  )
+  if (files) parameterInputs.Files = files
+  if (folders) parameterInputs.Folders = folders
   return parameterInputs
 }
 
-/** Compact continuation context: summary + first/latest user + latest agent. */
-export function buildCompactContext(
-  summary: string | null | undefined,
-  persistedMessages: PersistedMessage[]
+/** Prepend an instruction preamble ahead of the turn input (blank → unchanged). */
+export function withPreamble(
+  preamble: string | undefined,
+  input: string
 ): string {
-  const ordered = sortMessages(persistedMessages)
-  if (ordered.length === 0 && !(summary ?? "").trim()) return ""
-
-  const firstUser = ordered.find((m) => !m.isAgent)
-  const latestAgent = [...ordered].reverse().find((m) => m.isAgent)
-  const latestUser = [...ordered]
-    .reverse()
-    .find((m) => !m.isAgent && m !== firstUser)
-
-  const sections: string[] = []
-  if ((summary ?? "").trim()) sections.push(summary!.trim())
-  if (firstUser?.message.trim())
-    sections.push(`Initial user message:\n${firstUser.message.trim()}`)
-  if (latestUser?.message.trim())
-    sections.push(`Latest user message:\n${latestUser.message.trim()}`)
-  if (latestAgent?.message.trim())
-    sections.push(`Latest assistant message:\n${latestAgent.message.trim()}`)
-
-  return sections.join("\n\n").trim()
+  const trimmed = (preamble ?? "").trim()
+  return trimmed ? `${trimmed}\n\n${input}` : input
 }
 
-export function wrapRegularModePrompt(
-  compactContext: string,
+/**
+ * Compose the final user input for a turn. Stacking order: doc-skill
+ * (structure) → persona (lens) → input. Conversation continuity is handled
+ * by the agent's own session (sessionRid), so no context wrapping here.
+ */
+export function composeTurnInput({
+  userInput,
+  personaPreamble,
+  docSkillPrompt,
+}: {
   userInput: string
-): string {
-  const context = compactContext.trim()
-  const message = userInput.trim()
-  if (!context) return message
-  return (
-    "Use the following chat context to answer the user's latest question.\n\n" +
-    `${context}\n\n` +
-    `Current user message:\n${message}`
-  ).trim()
+  personaPreamble?: string
+  docSkillPrompt?: string
+}): string {
+  return withPreamble(docSkillPrompt, withPreamble(personaPreamble, userInput.trim()))
 }
+
+/* ------------------------------------------------------------------ */
+/* Session metadata prompts (LLM proxy)                                 */
+/* ------------------------------------------------------------------ */
 
 export function buildSummaryPrompt(transcript: string): string {
   return (
@@ -138,171 +122,8 @@ export function buildTitlePrompt(transcript: string): string {
   )
 }
 
-export interface TurnRequest {
-  agentRid: string
-  agentVersion: string | null
-  userInput: string
-  parameterInputs: Record<string, unknown>
-  compactContext: string
-}
-
-/** Prepend an instruction preamble ahead of the turn input (blank → unchanged). */
-function withPreamble(preamble: string | undefined, input: string): string {
-  const trimmed = (preamble ?? "").trim()
-  return trimmed ? `${trimmed}\n\n${input}` : input
-}
-
-export function prepareTurnRequest({
-  mode,
-  summary,
-  persistedMessages,
-  userInput,
-  userDocs,
-  ontology,
-  agents,
-  pinnedAgentRid,
-  pinnedAgentVersion,
-  personaPreamble,
-  docSkillPrompt,
-}: {
-  mode: string
-  summary: string | null | undefined
-  persistedMessages: PersistedMessage[]
-  userInput: string
-  userDocs: string[]
-  ontology: string
-  agents: { primary: string; thinking: string }
-  /** session's current agent rid/version — version reused only if same agent */
-  pinnedAgentRid?: string | null
-  pinnedAgentVersion?: string | null
-  /** optional persona system-preamble, prepended ahead of the input */
-  personaPreamble?: string
-  /** optional document-skill instruction block — outermost when present */
-  docSkillPrompt?: string
-}): TurnRequest {
-  const normalizedMode = normalizeMode(mode)
-  const compactContext = buildCompactContext(summary, persistedMessages)
-  const parameterInputs = buildParameterInputs(userDocs, {
-    mode: normalizedMode,
-    compactContext,
-    ontology,
-  })
-
-  const targetAgentRid =
-    normalizedMode === THINKING_MODE ? agents.thinking : agents.primary
-  const agentVersion =
-    pinnedAgentRid === targetAgentRid && pinnedAgentVersion?.trim()
-      ? pinnedAgentVersion
-      : null
-
-  // Preambles frame the turn; document scope (parameterInputs) stays
-  // orthogonal. Stacking order: doc-skill (structure) → persona (lens) →
-  // input. Sources still win — both preambles carry that clause.
-  const baseInput =
-    normalizedMode === THINKING_MODE
-      ? userInput.trim()
-      : wrapRegularModePrompt(compactContext, userInput)
-
-  return {
-    agentRid: targetAgentRid,
-    agentVersion,
-    userInput: withPreamble(docSkillPrompt, withPreamble(personaPreamble, baseInput)),
-    parameterInputs,
-    compactContext,
-  }
-}
-
 /* ------------------------------------------------------------------ */
-/* Thinking-trace summarization (high-level only)                       */
-/* ------------------------------------------------------------------ */
-
-/** Raw AIP SessionTrace shape (platform openapi AipAgents.SessionTrace). */
-export interface RawSessionTrace {
-  id?: string
-  status?: string
-  toolCallGroups?: {
-    toolCalls?: {
-      toolMetadata?: { name?: string; type?: string }
-      input?: { thought?: string; inputs?: Record<string, unknown> }
-      output?: unknown
-    }[]
-  }[]
-}
-
-export interface TraceStep {
-  id: string
-  kind: "search" | "read" | "analyze" | "tool"
-  label: string
-  detail?: string
-}
-
-const THOUGHT_LIMIT = 220
-
-function traceKindFor(toolName: string): TraceStep["kind"] {
-  const name = toolName.toLowerCase()
-  if (name.includes("query") || name.includes("search") || name.includes("semantic")) {
-    return "search"
-  }
-  if (name.includes("document") || name.includes("retriev") || name.includes("media")) {
-    return "read"
-  }
-  if (name.includes("calc") || name.includes("code") || name.includes("transform")) {
-    return "analyze"
-  }
-  return "tool"
-}
-
-function cleanThought(thought: string | undefined): string | undefined {
-  const text = (thought ?? "").replace(/\s+/g, " ").trim()
-  if (!text) return undefined
-  return text.length > THOUGHT_LIMIT ? `${text.slice(0, THOUGHT_LIMIT - 1)}…` : text
-}
-
-/** Reader-friendly fallback when a tool call carries no narration. */
-function friendlyToolLabel(name: string): string {
-  switch (traceKindFor(name || "tool")) {
-    case "search":
-      return "Searching the documents"
-    case "read":
-      return "Reading document pages"
-    case "analyze":
-      return "Analyzing the findings"
-    default:
-      return "Working"
-  }
-}
-
-/**
- * Collapse a raw AIP session trace into high-level steps for the thinking
- * indicator. The agent narrates each step in its one-line "thought" — that
- * narration IS the display line (tool names only pick the icon, or stand in
- * when a call carries no thought). Never surfaces tool inputs/outputs
- * (individual fetches, RIDs, query payloads). Consecutive identical lines
- * collapse into one step.
- */
-export function summarizeTrace(trace: RawSessionTrace | null | undefined): TraceStep[] {
-  if (!trace?.toolCallGroups) return []
-  const steps: TraceStep[] = []
-  let previousLabel: string | null = null
-
-  for (const group of trace.toolCallGroups) {
-    for (const call of group.toolCalls ?? []) {
-      const name = (call.toolMetadata?.name ?? "").trim()
-      const label = cleanThought(call.input?.thought) ?? friendlyToolLabel(name)
-      if (label === previousLabel) continue
-      previousLabel = label
-      steps.push({
-        id: `trace-${steps.length}`,
-        kind: traceKindFor(name || "tool"),
-        label,
-      })
-    }
-  }
-  return steps
-}
-
-/* ------------------------------------------------------------------ */
-/* Stream error sentinel (matches PoC protocol)                         */
+/* Stream error sentinel (kept from the PoC wire protocol)              */
 /* ------------------------------------------------------------------ */
 
 export const STREAM_ERROR_PREFIX = "__orbit_stream_error__:"

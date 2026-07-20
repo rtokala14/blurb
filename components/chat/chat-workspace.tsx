@@ -1,5 +1,6 @@
 "use client"
 
+import { OrbitMark } from "@/components/orbit-mark"
 import * as React from "react"
 import {
   Check,
@@ -10,7 +11,6 @@ import {
   PanelRight,
   PenSquare,
   PencilLine,
-  Sparkles,
 } from "lucide-react"
 
 import { Composer } from "@/components/chat/composer"
@@ -444,8 +444,8 @@ export function ChatWorkspace() {
                 ) : path.length === 0 ? (
                   <div className="flex h-full flex-col items-center justify-center gap-6 p-8">
                     <div className="text-center">
-                      <div className="from-primary to-chart-1 text-primary-foreground mx-auto mb-4 flex size-12 items-center justify-center rounded-xl bg-gradient-to-br shadow-sm">
-                        <Sparkles className="size-5" />
+                      <div className="text-primary mx-auto mb-4 size-12">
+                        <OrbitMark title="Orbit Docs" />
                       </div>
                       <h2 className="text-lg font-semibold">
                         Ask across your library

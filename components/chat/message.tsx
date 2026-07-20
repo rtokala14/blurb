@@ -10,7 +10,6 @@ import {
   FileText,
   FileType2,
   Mail,
-  Orbit,
   PencilLine,
   RefreshCw,
   ThumbsDown,
@@ -24,6 +23,7 @@ import { BranchSwitcher } from "@/components/chat/branch-switcher"
 import { CitationChip } from "@/components/chat/citation-chip"
 import { EmailDialog } from "@/components/chat/email-dialog"
 import { MessageContent } from "@/components/chat/message-content"
+import { OrbitMark } from "@/components/orbit-mark"
 import { ThinkingIndicator } from "@/components/chat/thinking-indicator"
 import { LivePdfDialog } from "@/components/live-pdf-dialog"
 import { PdfViewerDialog } from "@/components/pdf-viewer-dialog"
@@ -220,9 +220,18 @@ function MessageImpl({
 
   return (
     <div id={`msg-${message.id}`} className="group flex gap-3">
-      <div className="border-primary/20 bg-primary/5 flex size-7 shrink-0 items-center justify-center rounded-full border">
-        <Orbit className="text-primary size-3.5" />
-      </div>
+      {message.phase === "thinking" || message.phase === "streaming" ? (
+        /* While the agent works, the avatar becomes the live orbit mark. */
+        <div className="text-primary size-7 shrink-0">
+          <OrbitMark animated speed="stream" />
+        </div>
+      ) : (
+        <div className="border-primary/20 bg-primary/5 flex size-7 shrink-0 items-center justify-center rounded-full border">
+          <span className="text-primary size-4">
+            <OrbitMark />
+          </span>
+        </div>
+      )}
       <div className="min-w-0 flex-1 pt-0.5">
         <ThinkingIndicator message={message} />
 
@@ -354,26 +363,36 @@ function MessageImpl({
         open={emailOpen}
         onOpenChange={setEmailOpen}
       />
-      {openCitation?.mediaRid ? (
-        <LivePdfDialog
-          citation={openCitation}
-          open={openCitation !== null}
-          onOpenChange={(open) => !open && setOpenCitation(null)}
-        />
-      ) : (
-        <PdfViewerDialog
-          doc={
-            openCitation
-              ? (docs.find((d) => d.id === openCitation.docId) ?? null)
-              : null
-          }
-          page={openCitation?.page}
-          quote={openCitation?.quote}
-          citationLabel={openCitation ? `Citation ${openCitation.n}` : undefined}
-          open={openCitation !== null}
-          onOpenChange={(open) => !open && setOpenCitation(null)}
-        />
-      )}
+      {(() => {
+        /* Bracket-format citations carry no media rid — recover it (and the
+           doc) from the library by id or name so the real PDF still opens. */
+        const citedDoc = openCitation
+          ? (docs.find(
+              (d) =>
+                (openCitation.docId && d.id === openCitation.docId) ||
+                (openCitation.docName && d.name === openCitation.docName)
+            ) ?? null)
+          : null
+        const mediaRid = openCitation?.mediaRid || citedDoc?.mediaRid || null
+        return openCitation && mediaRid ? (
+          <LivePdfDialog
+            citation={{ ...openCitation, mediaRid }}
+            open={openCitation !== null}
+            onOpenChange={(open) => !open && setOpenCitation(null)}
+          />
+        ) : (
+          <PdfViewerDialog
+            doc={citedDoc}
+            page={openCitation?.page}
+            quote={openCitation?.quote}
+            citationLabel={
+              openCitation ? `Citation ${openCitation.n}` : undefined
+            }
+            open={openCitation !== null}
+            onOpenChange={(open) => !open && setOpenCitation(null)}
+          />
+        )
+      })()}
     </div>
   )
 }
@@ -387,8 +406,8 @@ function MessageImpl({
  * The previous `Object.keys(messages).length` comparison allocated two arrays
  * and enumerated all keys for every message on every store write (O(N²) allocs
  * per token). It's redundant: adding or loading a message always updates
- * `leafId` (see store `addMessage`/`setSessionTranscript`), and branch changes
- * update `activeBranchId`/`branches` — all already compared below. We must NOT
+ * `leafId` (see store `addMessage`/`setSessionTranscript`), and branch switches
+ * (sibling walks) move `leafId` too — already compared below. We must NOT
  * compare the `messages` object identity here: it's replaced on every stream
  * chunk, so doing so would re-render the entire transcript per token, which is
  * exactly what this memo exists to prevent.
@@ -397,8 +416,6 @@ export const Message = React.memo(MessageImpl, (prev, next) => {
   return (
     prev.message === next.message &&
     prev.session.id === next.session.id &&
-    prev.session.leafId === next.session.leafId &&
-    prev.session.activeBranchId === next.session.activeBranchId &&
-    prev.session.branches === next.session.branches
+    prev.session.leafId === next.session.leafId
   )
 })

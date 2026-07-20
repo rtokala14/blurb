@@ -13,7 +13,6 @@ import {
   FolderMinus,
   MessageSquareText,
   MoreHorizontal,
-  Orbit,
   Pencil,
   PenSquare,
   Pin,
@@ -59,6 +58,7 @@ import {
 } from "@/components/ui/sidebar"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { folderSwatchClass, moveSessionToFolder } from "@/hooks/use-chat-folders"
+import { OrbitMark } from "@/components/orbit-mark"
 import { useOrbit } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import type { ChatFolder, ChatSession } from "@/lib/types"
@@ -89,7 +89,6 @@ function SessionItem({
   setActiveSession,
   togglePinSession,
   deleteSession,
-  live,
   chatFolders,
   setFolderDialog,
 }: {
@@ -99,7 +98,6 @@ function SessionItem({
   setActiveSession: (id: string) => void
   togglePinSession: (id: string) => void
   deleteSession: (id: string) => void
-  live: boolean
   chatFolders: ChatFolder[]
   setFolderDialog: React.Dispatch<React.SetStateAction<FolderDialogState>>
 }) {
@@ -134,54 +132,52 @@ function SessionItem({
             <Pin />
             {session.pinned ? "Unpin" : "Pin"}
           </DropdownMenuItem>
-          {live && (
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger>
-                <FolderOpen className="text-muted-foreground mr-2 size-4" />
-                Move to folder
-              </DropdownMenuSubTrigger>
-              <DropdownMenuSubContent className="w-52">
-                {chatFolders.map((folder) => (
-                  <DropdownMenuItem
-                    key={folder.id}
-                    onClick={() => void moveSessionToFolder(session.id, folder.id)}
-                  >
-                    <span
-                      className={cn(
-                        "size-2.5 shrink-0 rounded-full",
-                        folderSwatchClass(folder.color)
-                      )}
-                    />
-                    <span className="truncate">{folder.name}</span>
-                    {session.chatFolderId === folder.id && (
-                      <Check className="ml-auto size-3.5" />
-                    )}
-                  </DropdownMenuItem>
-                ))}
-                {chatFolders.length > 0 && <DropdownMenuSeparator />}
-                {session.chatFolderId && (
-                  <DropdownMenuItem
-                    onClick={() => void moveSessionToFolder(session.id, null)}
-                  >
-                    <FolderMinus />
-                    Remove from folder
-                  </DropdownMenuItem>
-                )}
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger>
+              <FolderOpen className="text-muted-foreground mr-2 size-4" />
+              Move to folder
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="w-52">
+              {chatFolders.map((folder) => (
                 <DropdownMenuItem
-                  onClick={() =>
-                    setFolderDialog({
-                      open: true,
-                      folder: null,
-                      moveSessionId: session.id,
-                    })
-                  }
+                  key={folder.id}
+                  onClick={() => void moveSessionToFolder(session.id, folder.id)}
                 >
-                  <FolderPlus />
-                  New folder…
+                  <span
+                    className={cn(
+                      "size-2.5 shrink-0 rounded-full",
+                      folderSwatchClass(folder.color)
+                    )}
+                  />
+                  <span className="truncate">{folder.name}</span>
+                  {session.chatFolderId === folder.id && (
+                    <Check className="ml-auto size-3.5" />
+                  )}
                 </DropdownMenuItem>
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
-          )}
+              ))}
+              {chatFolders.length > 0 && <DropdownMenuSeparator />}
+              {session.chatFolderId && (
+                <DropdownMenuItem
+                  onClick={() => void moveSessionToFolder(session.id, null)}
+                >
+                  <FolderMinus />
+                  Remove from folder
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuItem
+                onClick={() =>
+                  setFolderDialog({
+                    open: true,
+                    folder: null,
+                    moveSessionId: session.id,
+                  })
+                }
+              >
+                <FolderPlus />
+                New folder…
+              </DropdownMenuItem>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
           <DropdownMenuSeparator />
           <DropdownMenuItem
             variant="destructive"
@@ -200,8 +196,27 @@ export function AppSidebar() {
   const pathname = usePathname()
   const sessions = useOrbit((s) => s.sessions)
   const isAdmin = useOrbit((s) => s.liveIsAdmin)
+  const liveUserEmail = useOrbit((s) => s.liveUserEmail)
+  // Identity comes from Foundry (config route); fallback while it resolves.
+  const profileEmail = liveUserEmail || "rohit.tokala@jacobs.com"
+  const profileName = React.useMemo(() => {
+    const local = profileEmail.split("@", 1)[0] ?? ""
+    const tokens = local.replace(/[_-]/g, ".").split(".").filter(Boolean)
+    if (tokens.length === 0) return "User"
+    return tokens
+      .map((t) => t.charAt(0).toUpperCase() + t.slice(1))
+      .join(" ")
+  }, [profileEmail])
+  const profileInitials = React.useMemo(
+    () =>
+      profileName
+        .split(/\s+/)
+        .slice(0, 2)
+        .map((t) => t.charAt(0).toUpperCase())
+        .join("") || "U",
+    [profileName]
+  )
   const chatFolders = useOrbit((s) => s.chatFolders)
-  const live = useOrbit((s) => s.live === true)
   const activeSessionId = useOrbit((s) => s.activeSessionId)
   const setActiveSession = useOrbit((s) => s.setActiveSession)
   const createSession = useOrbit((s) => s.createSession)
@@ -252,13 +267,15 @@ export function AppSidebar() {
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" asChild>
               <Link href="/chat">
-                <div className="from-primary to-chart-1 text-primary-foreground flex aspect-square size-8 items-center justify-center rounded-lg bg-gradient-to-br">
-                  <Orbit className="size-4" />
+                <div className="text-primary flex aspect-square size-8 items-center justify-center">
+                  <OrbitMark title="Orbit Docs" />
                 </div>
                 <div className="grid flex-1 text-left leading-tight">
-                  <span className="truncate font-semibold">Orbit Docs</span>
-                  <span className="text-muted-foreground truncate text-xs">
-                    Jacobs · Engineering Solutions
+                  <span
+                    className="truncate font-bold"
+                    style={{ fontFamily: "var(--font-display)" }}
+                  >
+                    Orbit Docs
                   </span>
                 </div>
               </Link>
@@ -310,20 +327,18 @@ export function AppSidebar() {
 
         <SidebarGroup className="group-data-[collapsible=icon]:hidden">
           <SidebarGroupLabel>Sessions</SidebarGroupLabel>
-          {live && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <SidebarGroupAction
-                  aria-label="New session folder"
-                  className="right-8"
-                  onClick={() => setFolderDialog({ open: true, folder: null })}
-                >
-                  <FolderPlus />
-                </SidebarGroupAction>
-              </TooltipTrigger>
-              <TooltipContent side="right">New folder</TooltipContent>
-            </Tooltip>
-          )}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <SidebarGroupAction
+                aria-label="New session folder"
+                className="right-8"
+                onClick={() => setFolderDialog({ open: true, folder: null })}
+              >
+                <FolderPlus />
+              </SidebarGroupAction>
+            </TooltipTrigger>
+            <TooltipContent side="right">New folder</TooltipContent>
+          </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
               <SidebarGroupAction
@@ -404,7 +419,6 @@ export function AppSidebar() {
                                 setActiveSession={setActiveSession}
                                 togglePinSession={togglePinSession}
                                 deleteSession={deleteSession}
-                                live={live}
                                 chatFolders={chatFolders}
                                 setFolderDialog={setFolderDialog}
                               />
@@ -424,7 +438,6 @@ export function AppSidebar() {
                   setActiveSession={setActiveSession}
                   togglePinSession={togglePinSession}
                   deleteSession={deleteSession}
-                  live={live}
                   chatFolders={chatFolders}
                   setFolderDialog={setFolderDialog}
                 />
@@ -441,12 +454,14 @@ export function AppSidebar() {
               <DropdownMenuTrigger asChild>
                 <SidebarMenuButton size="lg">
                   <Avatar className="size-8 rounded-lg">
-                    <AvatarFallback className="rounded-lg">RT</AvatarFallback>
+                    <AvatarFallback className="rounded-lg">
+                      {profileInitials}
+                    </AvatarFallback>
                   </Avatar>
                   <div className="grid flex-1 text-left text-sm leading-tight">
-                    <span className="truncate font-medium">Rohit Tokala</span>
+                    <span className="truncate font-medium">{profileName}</span>
                     <span className="text-muted-foreground truncate text-xs">
-                      tokalarr@gmail.com
+                      {profileEmail}
                     </span>
                   </div>
                 </SidebarMenuButton>

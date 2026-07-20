@@ -18,9 +18,15 @@ export function CitationChip({
   citation: Citation
   onOpen: (citation: Citation) => void
 }) {
-  const doc = useOrbit((s) => s.docs.find((d) => d.id === citation.docId))
-  // Live citations carry their own name/media rid even when the cited doc
-  // isn't in the session scope list.
+  const doc = useOrbit((s) =>
+    s.docs.find(
+      (d) =>
+        (citation.docId && d.id === citation.docId) ||
+        (citation.docName && d.name === citation.docName)
+    )
+  )
+  // Live citations carry their own name (and sometimes a media rid) even
+  // when the cited doc isn't in the user's library.
   const name = doc?.name ?? citation.docName
   if (!name) return null
   const pageLabel = citation.pagesLabel

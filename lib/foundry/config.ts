@@ -3,11 +3,10 @@ import "server-only"
 /**
  * Foundry connection configuration (server-side only).
  *
- * The app runs in two modes:
- *  - "demo": no credentials configured — the UI uses its built-in simulated
- *    data so every surface stays reviewable.
- *  - "live": credentials present — API routes proxy to Palantir Foundry via
- *    plain REST (per the platform openapi.yml; no Foundry SDK).
+ * The app is live-only: API routes proxy to Palantir Foundry via plain REST
+ * against the v3 OSDK surface (orbit-docs-openapi.yaml). If credentials
+ * aren't configured, /api/orbit/config reports it and routes hard-error via
+ * requireLive() — there is no offline/simulated fallback.
  *
  * Auth options (either):
  *  - FOUNDRY_CLIENT_ID + FOUNDRY_CLIENT_SECRET → OAuth2 client-credentials
@@ -22,27 +21,37 @@ export interface FoundryConfig {
   clientSecret?: string
   staticToken?: string
   userEmail: string
-  agents: {
-    primary: string
-    thinking: string
-    metadata: string
-    metadataVersion?: string
-  }
-  refineQueryApiName: string
+  /**
+   * The v3 main chat agent (AIP Chatbot), driven via the platform Sessions
+   * API: create session → streamingContinue with {Files, Folders} objectSet
+   * parameters. The ontology-query wrapper (orbitDocsV3MainAgent) exists too
+   * but the platform API is preferred (real token streaming + traces).
+   */
+  agentRid: string
+  mainAgentQueryApiName: string
   /**
    * Foundry's vendor-native LLM proxy. Exposes OpenAI- and Anthropic-compatible
    * endpoints under {host}/api/v2/llm/proxy/{provider}/v1, authenticated with
-   * the same Foundry bearer token. Used for lightweight text tasks (e.g. email
-   * refining) where the full AIP-agent grounding pipeline is unnecessary.
+   * the same Foundry bearer token. Used for text tasks (email/doc refining,
+   * session titles/summaries) that don't need the grounded document agent.
+   *
+   * Verified-available proxy models (2026-07): OpenAI gpt-4o, gpt-4.1,
+   * gpt-4.1-mini, gpt-5, gpt-5-mini; Anthropic claude-haiku-4-5,
+   * claude-sonnet-4-5, claude-opus-4-1.
+   *
+   * `model` is the general default (refine, etc.). `metadataModel` is a fast,
+   * cheap model reserved for auto title/summary generation.
    */
   llmProxy: {
-    /** default provider for refine-style tasks */
     provider: "openai" | "anthropic"
-    /** model id for the default provider (e.g. "gpt-4o", "claude-sonnet-4") */
     model: string
-    /** max tokens for a single completion */
+    metadataProvider: "openai" | "anthropic"
+    metadataModel: string
     maxTokens: number
   }
+  /** engine for /api/orbit/refine — the v3 stack defaults to the LLM proxy */
+  refineEngine: "llm-proxy" | "query"
+  refineQueryApiName: string
 }
 
 const DEFAULT_HOSTNAME = "https://jacobs.palantirfoundry.com"
@@ -54,9 +63,6 @@ function normalizeHostname(value: string): string {
 }
 
 export function getFoundryConfig(): FoundryConfig {
-  const primary =
-    process.env.PRIMARY_AGENT_RID ||
-    "ri.aip-agents..agent.b5324c77-83b4-4edb-806a-1d16cc7002a5"
   return {
     hostname: normalizeHostname(process.env.FOUNDRY_HOSTNAME || DEFAULT_HOSTNAME),
     ontology: process.env.FOUNDRY_ONTOLOGY || "jacobs-ontology",
@@ -67,26 +73,29 @@ export function getFoundryConfig(): FoundryConfig {
     userEmail: (process.env.ORBIT_USER_EMAIL || "rohit.tokala@jacobs.com")
       .trim()
       .toLowerCase(),
-    agents: {
-      primary,
-      thinking:
-        process.env.DEEP_RESEARCH_AGENT_RID ||
-        "ri.aip-agents..agent.01ce23ea-9165-48a2-94e2-90ad39f2d7e8",
-      metadata: process.env.SESSION_METADATA_AGENT_RID || primary,
-      metadataVersion: process.env.SESSION_METADATA_AGENT_VERSION || undefined,
-    },
-    refineQueryApiName:
-      process.env.REFINE_QUERY_API_NAME || "dgiiDocAiRefiningAgent",
+    agentRid:
+      process.env.PRIMARY_AGENT_RID ||
+      "ri.aip-agents..agent.2addece7-23d3-4d5f-b521-27747fce8806",
+    mainAgentQueryApiName:
+      process.env.ORBIT_MAIN_AGENT_QUERY || "orbitDocsV3MainAgent",
     llmProxy: {
       provider:
         process.env.LLM_PROXY_PROVIDER === "anthropic" ? "anthropic" : "openai",
       model:
         process.env.LLM_PROXY_MODEL ||
         (process.env.LLM_PROXY_PROVIDER === "anthropic"
-          ? "claude-sonnet-4"
-          : "gpt-4o"),
+          ? "claude-sonnet-4-5"
+          : "gpt-4.1"),
+      metadataProvider:
+        process.env.LLM_METADATA_PROVIDER === "anthropic"
+          ? "anthropic"
+          : "openai",
+      metadataModel: process.env.LLM_METADATA_MODEL || "gpt-5-mini",
       maxTokens: Number(process.env.LLM_PROXY_MAX_TOKENS) || 2048,
     },
+    refineEngine: process.env.REFINE_ENGINE === "query" ? "query" : "llm-proxy",
+    refineQueryApiName:
+      process.env.REFINE_QUERY_API_NAME || "dgiiDocAiRefiningAgent",
   }
 }
 

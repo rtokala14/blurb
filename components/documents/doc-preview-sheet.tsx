@@ -4,7 +4,6 @@ import * as React from "react"
 import dynamic from "next/dynamic"
 import { useRouter } from "next/navigation"
 import {
-  Clock,
   Cloud,
   Eye,
   MessageSquarePlus,
@@ -28,9 +27,8 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
-import { formatDate, formatSize } from "@/lib/format"
+import { formatSize } from "@/lib/format"
 import { TimeAgo } from "@/components/time-ago"
-import { versionsFor } from "@/lib/data"
 import { useOrbit } from "@/lib/store"
 import type { Doc, DocStatus } from "@/lib/types"
 
@@ -172,33 +170,6 @@ export function DocPreviewSheet({
                   </div>
                 </div>
               )}
-
-              <Separator />
-
-              <div>
-                <h4 className="mb-2 flex items-center gap-1.5 text-sm font-medium">
-                  <Clock className="text-muted-foreground size-3.5" />
-                  Version history
-                </h4>
-                <div className="space-y-3">
-                  {versionsFor(doc).map((v) => (
-                    <div key={v.version} className="flex gap-3 text-sm">
-                      <Badge
-                        variant={v.version === doc.version ? "default" : "outline"}
-                        className="h-5 shrink-0 tabular-nums"
-                      >
-                        v{v.version}
-                      </Badge>
-                      <div className="min-w-0">
-                        <p className="leading-tight">{v.note}</p>
-                        <p className="text-muted-foreground text-xs">
-                          {v.author} · {formatDate(v.date)}
-                        </p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
             </div>
           </ScrollArea>
 

@@ -32,7 +32,18 @@ export interface CompleteOptions {
     model?: string
     maxTokens?: number
     temperature?: number
+    /** OpenAI reasoning models (gpt-5*, o-series) only: "minimal".."high" */
+    reasoningEffort?: "minimal" | "low" | "medium" | "high"
     signal?: AbortSignal
+}
+
+/**
+ * OpenAI reasoning-model family (gpt-5*, o1/o3/o4…). These take
+ * `max_completion_tokens` (not `max_tokens`), reject `temperature`, and accept
+ * `reasoning_effort`. Detected by model id so the request shape adapts.
+ */
+function isReasoningModel(model: string): boolean {
+    return /^(gpt-5|o[0-9])/i.test(model)
 }
 
 function proxyUrl(provider: LlmProvider, path: string): string {
@@ -128,16 +139,24 @@ export async function complete(options: CompleteOptions): Promise<string> {
             .trim()
     }
 
+    const reasoning = isReasoningModel(model)
     const res = await proxyFetch(
         "openai",
         "/chat/completions",
         {
             model,
-            max_tokens: maxTokens,
-            ...(options.temperature !== undefined
-                ? { temperature: options.temperature }
-                : {}),
             messages: options.messages,
+            ...(reasoning
+                ? {
+                      max_completion_tokens: maxTokens,
+                      reasoning_effort: options.reasoningEffort ?? "minimal",
+                  }
+                : {
+                      max_tokens: maxTokens,
+                      ...(options.temperature !== undefined
+                          ? { temperature: options.temperature }
+                          : {}),
+                  }),
         },
         options.signal
     )

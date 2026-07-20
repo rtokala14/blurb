@@ -1,16 +1,16 @@
 import {
-  getAccessibleFolders,
+  deleteDocRow,
+  editDocRow,
   getDoc,
-  normalizeEmail,
-  removeDocFromFolders,
-  softDeleteDoc,
+  ROOT_FOLDER_ID,
+  sameEmail,
 } from "@/lib/foundry/ontology"
 import { errorResponse, json, requireLive } from "@/lib/foundry/http"
 import { resolveRequestUser } from "@/lib/foundry/user"
 
 export const dynamic = "force-dynamic"
 
-/** Soft-delete a document and pull it out of any accessible folders. */
+/** Hard-delete a document (owner only). */
 export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ pk: string }> }
@@ -21,16 +21,45 @@ export async function DELETE(
     const { pk } = await params
     const userEmail = await resolveRequestUser(request)
     const doc = await getDoc(pk)
-    if (!doc || doc.isActive === false) {
-      return json({ error: "Document not found" }, { status: 404 })
-    }
-    if (normalizeEmail(doc.addedBy) !== normalizeEmail(userEmail)) {
+    if (!doc) return json({ error: "Document not found" }, { status: 404 })
+    if (!sameEmail(doc.userEmail, userEmail)) {
       return json({ error: "Not allowed" }, { status: 403 })
     }
-    const folders = await getAccessibleFolders(userEmail)
-    const removedFromFolders = await removeDocFromFolders(pk, folders)
-    await softDeleteDoc(doc)
-    return json({ success: true, removedFromFolders })
+    await deleteDocRow(pk)
+    return json({ success: true, removedFromFolders: 0 })
+  } catch (error) {
+    return errorResponse(error)
+  }
+}
+
+/** Move a document between folders and/or update its sharing (owner only). */
+export async function PUT(
+  request: Request,
+  { params }: { params: Promise<{ pk: string }> }
+) {
+  const guard = requireLive()
+  if (guard) return guard
+  try {
+    const { pk } = await params
+    const userEmail = await resolveRequestUser(request)
+    const doc = await getDoc(pk)
+    if (!doc) return json({ error: "Document not found" }, { status: 404 })
+    if (!sameEmail(doc.userEmail, userEmail)) {
+      return json({ error: "Not allowed" }, { status: 403 })
+    }
+    const body = (await request.json()) as Partial<{
+      folderId: string | null
+      allowedUserIds: string[]
+    }>
+    await editDocRow(doc, {
+      ...(body.folderId !== undefined
+        ? { parentFolderId: body.folderId ?? ROOT_FOLDER_ID }
+        : {}),
+      ...(body.allowedUserIds !== undefined
+        ? { allowedUserIds: body.allowedUserIds }
+        : {}),
+    })
+    return json({ success: true })
   } catch (error) {
     return errorResponse(error)
   }

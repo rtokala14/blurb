@@ -1,7 +1,10 @@
 import {
+  getIndexCountsForDocs,
   listAccessibleDocs,
+  pk,
   searchAccessibleDocs,
   serializeDoc,
+  type DocRow,
 } from "@/lib/foundry/ontology"
 import { errorResponse, json, requireLive } from "@/lib/foundry/http"
 import { resolveRequestUser } from "@/lib/foundry/user"
@@ -9,8 +12,8 @@ import { resolveRequestUser } from "@/lib/foundry/user"
 export const dynamic = "force-dynamic"
 
 /**
- * Documents list (PoC GET /api/docs). `?q=` runs an ontology-side term
- * search across the user's whole corpus instead of the newest page.
+ * Documents list. `?q=` runs an ontology-side term search across the user's
+ * whole corpus instead of the newest page.
  */
 export async function GET(request: Request) {
   const guard = requireLive()
@@ -25,18 +28,25 @@ export async function GET(request: Request) {
         ? Math.min(limitParam, 2000)
         : undefined
 
-    const result = q
-      ? await searchAccessibleDocs(userEmail, q, { limit: limit ?? 50 })
-      : await listAccessibleDocs(userEmail, limit ? { limit } : {})
+    let docs: DocRow[]
+    if (q) {
+      docs = await searchAccessibleDocs(userEmail, q, { limit: limit ?? 50 })
+    } else {
+      const result = await listAccessibleDocs(
+        userEmail,
+        limit ? { limit } : {}
+      )
+      docs = result.docs
+    }
+    const indexCounts = await getIndexCountsForDocs(docs)
     return json({
-      data: result.docs.map((doc) =>
+      data: docs.map((doc) =>
         serializeDoc(doc, {
-          sharedFolderNames: result.sharedFolderNames,
-          indexStatus: result.indexStatus,
+          indexCounts: indexCounts.get(pk(doc)),
           userEmail,
         })
       ),
-      count: result.docs.length,
+      count: docs.length,
     })
   } catch (error) {
     return errorResponse(error)

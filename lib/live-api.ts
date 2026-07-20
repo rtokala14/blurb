@@ -3,7 +3,7 @@
 import { STREAM_ERROR_PREFIX } from "@/lib/foundry/turn"
 
 /**
- * Client for the /api/orbit routes (which proxy Palantir Foundry).
+ * Client for the /api/orbit routes (which proxy the Orbit Docs v3 pipeline).
  * Small typed fetch wrappers plus the streaming reader for chat turns.
  */
 
@@ -25,9 +25,14 @@ export interface LiveDocument {
   sharedFolderNames: string[]
   createdAt: string | null
   noPages: number | null
+  /** v3: real server-side nested folder membership (null = library root) */
+  folderId: string | null
+  status: string
   indexStatus: {
     isIndexingComplete: boolean
     embeddingCount: number | null
+    entityCount: number | null
+    kgReady: boolean
     lastUpdated: string | null
     noPages: number | null
   } | null
@@ -41,21 +46,21 @@ export interface LiveDocument {
 export interface LiveFolder {
   primaryKey: string
   name: string
+  /** v3: server always sends null — colors are a client-side preference */
   color: string | null
+  /** v3: real nested-folder parent (null = top level) */
+  parentId: string | null
   createdBy: string
   accessEmails: string[]
-  contents: string[]
   updatedAt: string | null
-  isSyncManaged: boolean
-  sourceSyncConfigPk: string | null
 }
 
 export interface LiveSession {
   rid: string
-  mode: string
+  mode: "regular"
   chatFolderId: string | null
-  activeBranchId: string | null
-  defaultBranchId: string | null
+  isDeleted: boolean
+  activeLeafMessageId: string | null
   metadata: {
     title: string
     createdTime: string | null
@@ -65,7 +70,12 @@ export interface LiveSession {
   docsAttached: string[]
   foldersAttached: string[]
   summary: string
-  currentRun: { status: string; error: string | null }
+  currentRun: {
+    status: string
+    error: string | null
+    messageId: string | null
+    startedAt: string | null
+  }
 }
 
 export interface LiveMessageRow {
@@ -74,25 +84,15 @@ export interface LiveMessageRow {
   content: string
   createdAt: string | null
   parentMessageId: string | null
-  branchId: string | null
-  hasAlternateBranches: boolean | null
-  alternateBranchCount: number | null
-}
-
-export interface LiveBranch {
-  id: string
-  sessionId: string
-  name: string
-  isDefault: boolean
-  anchorMessageId: string | null
-  headMessageId: string | null
+  model: string | null
+  citations: unknown[]
+  scope: { documentIds?: string[]; folderIds?: string[] }
 }
 
 export interface LiveContent {
+  /** the FULL message tree; the client derives the visible path */
   messages: LiveMessageRow[]
-  branches?: LiveBranch[]
-  activeBranchId?: string | null
-  defaultBranchId?: string | null
+  activeLeafMessageId: string | null
 }
 
 export interface LiveSyncSource {
@@ -163,17 +163,31 @@ export const liveApi = {
     apiJson<{ success: boolean }>(`/api/orbit/docs/${encodeURIComponent(pk)}`, {
       method: "DELETE",
     }),
-  uploadDocs: async (files: { file: File; name: string }[]) => {
+  /** Move a doc between folders and/or update its explicit share list. */
+  updateDoc: (
+    pk: string,
+    body: Partial<{ folderId: string | null; allowedUserIds: string[] }>
+  ) =>
+    apiJson<{ success: boolean; data: LiveDocument | null }>(
+      `/api/orbit/docs/${encodeURIComponent(pk)}`,
+      { method: "PUT", body: JSON.stringify(body) }
+    ),
+  uploadDocs: async (
+    files: { file: File; name: string }[],
+    folderId?: string | null
+  ) => {
     const form = new FormData()
     for (const { file, name } of files) {
       form.append("files", file)
       form.append("names", name)
     }
+    if (folderId) form.append("folderId", folderId)
     const res = await fetch("/api/orbit/docs/upload", { method: "POST", body: form })
     const data = (await res.json().catch(() => ({}))) as {
       success?: boolean
       error?: string
       duplicates?: string[]
+      uploaded?: { primaryKey: string; documentName: string; noPages: number | null }[]
     }
     if (!res.ok) {
       if (res.status === 409 && data.duplicates?.length) {
@@ -187,20 +201,30 @@ export const liveApi = {
     }
     return data
   },
+
   folders: () => apiJson<{ data: LiveFolder[] }>("/api/orbit/folders"),
-  createFolder: (body: { name: string; color?: string }) =>
+  createFolder: (body: {
+    name: string
+    parentId?: string | null
+    accessEmails?: string[]
+  }) =>
     apiJson<LiveFolder>("/api/orbit/folders", {
       method: "POST",
       body: JSON.stringify(body),
     }),
   updateFolder: (
     id: string,
-    body: Partial<{ name: string; contents: string[]; accessEmails: string[] }>
+    body: Partial<{ name: string; parentId: string | null; accessEmails: string[] }>
   ) =>
     apiJson<LiveFolder>(`/api/orbit/folders/${encodeURIComponent(id)}`, {
       method: "PUT",
       body: JSON.stringify(body),
     }),
+  deleteFolder: (id: string, force = true) =>
+    apiJson<{ success: boolean }>(
+      `/api/orbit/folders/${encodeURIComponent(id)}${force ? "?force=true" : ""}`,
+      { method: "DELETE" }
+    ),
 
   sessions: () => apiJson<{ data: LiveSession[] }>("/api/orbit/sessions"),
   createSession: (body: { docsAttached?: string[]; foldersAttached?: string[] }) =>
@@ -230,26 +254,18 @@ export const liveApi = {
   content: (rid: string) =>
     apiJson<LiveContent>(`/api/orbit/sessions/${encodeURIComponent(rid)}/content`),
   run: (rid: string) =>
-    apiJson<{ status: string; error: string | null }>(
-      `/api/orbit/sessions/${encodeURIComponent(rid)}/run`
-    ),
-  trace: (rid: string, traceId?: string) =>
     apiJson<{
-      status: string
-      steps: { id: string; kind: "search" | "read" | "analyze" | "tool"; label: string; detail?: string }[]
-    }>(
-      `/api/orbit/sessions/${encodeURIComponent(rid)}/trace${traceId ? `?traceId=${encodeURIComponent(traceId)}` : ""
-      }`
-    ),
-  createBranch: (rid: string, anchorMessageId: string, name?: string) =>
-    apiJson<{ activeBranchId: string; branch: LiveBranch }>(
-      `/api/orbit/sessions/${encodeURIComponent(rid)}/branches`,
-      { method: "POST", body: JSON.stringify({ anchorMessageId, name }) }
-    ),
-  activateBranch: (rid: string, branchId: string) =>
-    apiJson<{ success: boolean }>(
-      `/api/orbit/sessions/${encodeURIComponent(rid)}/branches/${encodeURIComponent(branchId)}/activate`,
-      { method: "POST" }
+      status: "idle" | "in_progress" | "failed"
+      sessionId: string
+      messageId: string | null
+      error: string | null
+      activeLeafMessageId: string | null
+    }>(`/api/orbit/sessions/${encodeURIComponent(rid)}/run`),
+  /** Persist which branch tip is the active leaf (pure tree op). */
+  setActiveLeaf: (rid: string, messageId: string) =>
+    apiJson<{ success: boolean; activeLeafMessageId: string }>(
+      `/api/orbit/sessions/${encodeURIComponent(rid)}/leaf`,
+      { method: "PUT", body: JSON.stringify({ messageId }) }
     ),
   refine: (body: {
     userInput: string
@@ -292,44 +308,6 @@ export const liveApi = {
       `/api/orbit/sessions/${encodeURIComponent(sessionId)}/folder`,
       { method: "PUT", body: JSON.stringify({ folderId }) }
     ),
-
-  syncBrowse: (sourceId: string, path: string) =>
-    apiJson<SyncBrowseResponse>(
-      `/api/orbit/sync/sources/${encodeURIComponent(sourceId)}/browse?path=${encodeURIComponent(path)}`
-    ),
-  syncSearch: (sourceId: string, q: string) =>
-    apiJson<SyncBrowseResponse>(
-      `/api/orbit/sync/sources/${encodeURIComponent(sourceId)}/search?q=${encodeURIComponent(q)}`
-    ),
-  syncFolderDocs: (sourceId: string, path: string) =>
-    apiJson<{ path: string; docPks: string[]; count: number }>(
-      `/api/orbit/sync/sources/${encodeURIComponent(sourceId)}/folder-docs?path=${encodeURIComponent(path)}`
-    ),
-  updateSyncSourceShare: (sourceId: string, sharedWith: string[]) =>
-    apiJson<{ success: boolean; sharedWith: string[] }>(
-      `/api/orbit/sync/sources/${encodeURIComponent(sourceId)}/share`,
-      { method: "PUT", body: JSON.stringify({ sharedWith }) }
-    ),
-}
-
-export interface SyncEntry {
-  name: string
-  path: string
-  isFolder: boolean
-  orbitObjectPk: string | null
-  syncStatus: string | null
-  folderCount: number
-  fileCount: number
-}
-
-export interface SyncBrowseResponse {
-  path: string
-  entries: SyncEntry[]
-  total: number
-  offset: number
-  limit: number
-  totalFiles: number
-  totalFolders: number
 }
 
 export interface StreamTurnCallbacks {
@@ -339,19 +317,20 @@ export interface StreamTurnCallbacks {
 }
 
 /**
- * Stream a chat turn (plain text chunks; in-band errors carry the
- * __orbit_stream_error__: sentinel — buffered until disambiguated).
+ * Stream a chat turn. The v3 pipeline returns the whole markdown reply as one
+ * octet-stream chunk (no incremental tokens); in-band errors carry the
+ * __orbit_stream_error__: sentinel — buffered until disambiguated. The reader
+ * below handles both the single-chunk and (legacy) multi-chunk cases fine.
  */
 export async function streamTurn(
   sessionRid: string,
   body: {
     userInput: string
-    mode?: string
-    branchId?: string | null
-    messageId?: string
-    sessionTraceId?: string
+    parentMessageId?: string | null
     personaId?: string | null
     docSkillId?: string | null
+    docsAttached?: string[]
+    foldersAttached?: string[]
   },
   callbacks: StreamTurnCallbacks,
   signal?: AbortSignal
@@ -363,12 +342,11 @@ export async function streamTurn(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         userInput: body.userInput,
-        mode: body.mode ?? "regular",
-        branchId: body.branchId ?? undefined,
-        messageId: body.messageId ?? crypto.randomUUID(),
-        sessionTraceId: body.sessionTraceId ?? crypto.randomUUID(),
+        parentMessageId: body.parentMessageId ?? undefined,
         personaId: body.personaId ?? undefined,
         docSkillId: body.docSkillId ?? undefined,
+        docsAttached: body.docsAttached ?? undefined,
+        foldersAttached: body.foldersAttached ?? undefined,
       }),
       signal,
     }
@@ -426,25 +404,20 @@ export interface AdminOverview {
   generatedAt: string
   days: number
   includeAdmins: boolean
-  includeSynced: boolean
   totals: {
     users: number
     activeUsers: number
     admins: number
-    unlimitedUsers: number
     usersNearQuota: number
     uploadsToday: number
     sessionsToday: number
     docsToday: number
-    thinkingSessionsInRange: number
     corpus: {
       documents: number
       indexed: number
       indexedBase: number
       indexedPct: number
-      syncedDocuments: number
       manualDocuments: number
-      totalPages: number
     }
   }
   trends: { date: string; sessions: number; turns: number; documents: number; uniqueUsers: number }[]
@@ -456,19 +429,30 @@ export interface AdminUser {
   primaryKey: string
   email: string
   name: string
+  role: string
   isAdmin: boolean
   isActive: boolean
-  hasUnlimitedUploads: boolean
+  isOnboarded: boolean
+  isAllowedToUpload: boolean
   dailyUploadLimit: number
-  bonusUploadLimit: number
-  bonusExpiresAt: string | null
+  activeBonusUploads: number
   effectiveLimit: number | null
   uploadsUsedToday: number
   uploadsRemainingToday: number | null
   documents: number
-  syncedDocuments: number
   createdAt: string | null
   updatedAt: string | null
+}
+
+export interface AdminGrant {
+  primaryKey: string
+  userEmail: string
+  bonusUploads: number
+  validFrom: string | null
+  validUntil: string | null
+  reason: string
+  createdBy: string
+  createdAt: string | null
 }
 
 export interface AdminSessionRow {
@@ -482,21 +466,19 @@ export interface AdminSessionRow {
 }
 
 export const adminApi = {
-  overview: (opts: { days: number; includeAdmins: boolean; includeSynced: boolean }) =>
+  overview: (opts: { days: number; includeAdmins: boolean }) =>
     apiJson<AdminOverview>(
-      `/api/orbit/admin/overview?days=${opts.days}&includeAdmins=${opts.includeAdmins}&includeSynced=${opts.includeSynced}`
+      `/api/orbit/admin/overview?days=${opts.days}&includeAdmins=${opts.includeAdmins}`
     ),
   users: () => apiJson<{ data: AdminUser[] }>("/api/orbit/admin/users"),
   updateUser: (
     pk: string,
     body: Partial<{
       name: string
-      isAdmin: boolean
-      isActive: boolean
-      hasUnlimitedUploads: boolean
+      role: string
+      isOnboarded: boolean
+      isAllowedToUpload: boolean
       dailyUploadLimit: number
-      bonusUploadLimit: number
-      bonusExpiresAt: string | null
     }>
   ) =>
     apiJson<{ success: boolean; data: AdminUser | null }>(
@@ -505,4 +487,16 @@ export const adminApi = {
     ),
   sessions: (limit = 200) =>
     apiJson<{ data: AdminSessionRow[] }>(`/api/orbit/admin/sessions?limit=${limit}`),
+  grants: () => apiJson<{ data: AdminGrant[] }>("/api/orbit/admin/grants"),
+  createGrant: (body: {
+    userEmail: string
+    bonusUploads: number
+    validUntil: string
+    validFrom?: string
+    reason?: string
+  }) =>
+    apiJson<{ success: boolean; data: AdminGrant | null }>("/api/orbit/admin/grants", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 }

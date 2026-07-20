@@ -4,6 +4,7 @@ import { runSessionTurn } from "@/lib/foundry/chat"
 import {
   getSessionRow,
   sanitizeAttachments,
+  sessionOptions,
   updateSessionRow,
 } from "@/lib/foundry/ontology"
 import { errorResponse, json, requireLive } from "@/lib/foundry/http"
@@ -12,10 +13,13 @@ import { resolveRequestUser } from "@/lib/foundry/user"
 export const dynamic = "force-dynamic"
 export const maxDuration = 300
 
+/** Runs stuck in_progress longer than this no longer block a new turn. */
+const RUN_STALE_MS = 6 * 60_000
+
 /**
- * Persist the user message, run the agent turn on Foundry, and stream the
- * markdown reply straight through (plain text chunks, PoC protocol: errors
- * arrive in-band with the __orbit_stream_error__: sentinel).
+ * Persist the user message, run the v3 agent turn, and stream the markdown
+ * reply straight through (plain chunks; errors arrive in-band with the
+ * __orbit_stream_error__: sentinel).
  */
 export async function POST(
   request: Request,
@@ -31,66 +35,60 @@ export async function POST(
 
     const body = (await request.json()) as {
       userInput?: string
-      mode?: string
-      messageId?: string
-      sessionTraceId?: string
-      branchId?: string
-      parentMessageId?: string
+      parentMessageId?: string | null
       personaId?: string | null
       docSkillId?: string | null
+      docsAttached?: string[]
+      foldersAttached?: string[]
     }
     const userInput = (body.userInput ?? "").trim()
-    if (!userInput) return json({ error: "userInput is required" }, { status: 422 })
-
-    if ((session.currentRunStatus ?? "idle") === "in_progress") {
-      return json(
-        {
-          error:
-            "A response is already being generated for this session. Please wait for it to complete.",
-        },
-        { status: 409 }
-      )
+    if (!userInput) {
+      return json({ error: "userInput is required" }, { status: 422 })
     }
 
-    // Re-sanitize attachments against current access (PoC behavior).
-    const sanitized = await sanitizeAttachments(
-      userEmail,
-      (session.docsAttached ?? []).map(String),
-      (session.foldersAttached ?? []).map(String)
-    )
-    if (sanitized.scopedDocIds.length === 0) {
-      return json(
-        {
-          error:
-            "No accessible documents are attached to this session. Select documents and try again.",
-        },
-        { status: 422 }
-      )
+    const run = sessionOptions(session).currentRun
+    if (run?.status === "in_progress") {
+      const startedAt = Date.parse(run.startedAt ?? "")
+      const active =
+        !Number.isFinite(startedAt) || Date.now() - startedAt < RUN_STALE_MS
+      if (active) {
+        return json(
+          {
+            error:
+              "A response is already being generated for this session. Please wait for it to complete.",
+          },
+          { status: 409 }
+        )
+      }
     }
-    const attachmentsChanged =
-      JSON.stringify(sanitized.docsAttached) !==
-        JSON.stringify((session.docsAttached ?? []).map(String)) ||
-      JSON.stringify(sanitized.foldersAttached) !==
-        JSON.stringify((session.foldersAttached ?? []).map(String))
-    if (attachmentsChanged) {
-      session =
-        (await updateSessionRow(id, {
+
+    if (body.docsAttached !== undefined || body.foldersAttached !== undefined) {
+      const sanitized = await sanitizeAttachments(
+        userEmail,
+        body.docsAttached ?? [],
+        body.foldersAttached ?? []
+      )
+      await updateSessionRow(session, {
+        options: {
           docsAttached: sanitized.docsAttached,
           foldersAttached: sanitized.foldersAttached,
-          updatedAt: new Date().toISOString(),
-        })) ?? session
+        },
+      })
+      session = (await getSessionRow(id, userEmail)) ?? session
+    }
+
+    const options = sessionOptions(session)
+    const scope = {
+      documentIds: options.docsAttached ?? [],
+      folderIds: options.foldersAttached ?? [],
     }
 
     const { stream } = await runSessionTurn({
       session,
       userEmail,
       userInput,
-      mode: body.mode,
-      branchId: body.branchId,
       parentMessageId: body.parentMessageId,
-      messageId: body.messageId,
-      sessionTraceId: body.sessionTraceId,
-      scopedDocIds: sanitized.scopedDocIds,
+      scope,
       personaId: body.personaId,
       docSkillId: body.docSkillId,
     })

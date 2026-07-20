@@ -1,16 +1,15 @@
-import { getObjectsByIds } from "@/lib/foundry/client"
 import {
-  getAccessibleFolders,
-  getIndexStatusForDocs,
+  canAccessDoc,
+  getDocsByIds,
+  getIndexCountsForDocs,
   normalizeEmail,
-  type DocRow,
 } from "@/lib/foundry/ontology"
 import { errorResponse, json, requireLive } from "@/lib/foundry/http"
 import { resolveRequestUser } from "@/lib/foundry/user"
 
 export const dynamic = "force-dynamic"
 
-/** Indexing status poll for pending documents (PoC POST /api/docs/status). */
+/** Indexing status poll for pending documents. */
 export async function POST(request: Request) {
   const guard = requireLive()
   if (guard) return guard
@@ -24,39 +23,33 @@ export async function POST(request: Request) {
     })
     if (primaryKeys.length === 0) return json({ data: [], count: 0 })
 
-    const user = normalizeEmail(await resolveRequestUser(request))
-    const [docs, statusMap, folders] = await Promise.all([
-      getObjectsByIds<DocRow>("OrbitDocsList", "primaryKey_", primaryKeys),
-      getIndexStatusForDocs(primaryKeys),
-      getAccessibleFolders(user),
-    ])
-    const folderDocIds = new Set<string>()
-    for (const folder of folders) {
-      for (const docId of folder.contents ?? []) folderDocIds.add(String(docId))
-    }
+    const email = normalizeEmail(await resolveRequestUser(request))
+    /* Docs first: the counts lookup needs each doc's mediaItemRid to resolve
+       pipeline-keyed status rows (see getIndexCountsForDocs). */
+    const docs = await getDocsByIds(primaryKeys)
+    const indexCounts = await getIndexCountsForDocs([...docs.values()])
 
-    // PoC visibility rules: only active docs the user owns or can reach
-    // through an accessible folder get a status update.
     const data = primaryKeys.flatMap((key) => {
       const doc = docs.get(key)
-      if (!doc || doc.isActive === false) return []
-      if (normalizeEmail(doc.addedBy) !== user && !folderDocIds.has(key)) {
-        return []
-      }
-      const status = statusMap.get(key)
+      if (!doc || !canAccessDoc(doc, email)) return []
+      const counts = indexCounts.get(key)
+      const chunkCount = counts?.chunkCount ?? 0
+      const entityCount = counts?.entityCount ?? 0
+      const noPages = counts?.pageCount ?? null
+      const isIndexed = chunkCount > 0
       return [
         {
           primaryKey: key,
-          isIndexed: status?.isIndexingComplete ?? Boolean(doc.isIndexed),
-          noPages: doc.noPages ?? status?.noPages ?? null,
-          indexStatus: status
-            ? {
-                isIndexingComplete: Boolean(status.isIndexingComplete),
-                embeddingCount: status.embeddingCount ?? null,
-                lastUpdated: status.lastUpdated ?? null,
-                noPages: status.noPages ?? null,
-              }
-            : null,
+          isIndexed,
+          noPages,
+          indexStatus: {
+            isIndexingComplete: isIndexed,
+            embeddingCount: chunkCount,
+            entityCount,
+            kgReady: entityCount > 0,
+            lastUpdated: null as string | null,
+            noPages,
+          },
         },
       ]
     })

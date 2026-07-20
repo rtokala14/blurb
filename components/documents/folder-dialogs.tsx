@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -17,7 +18,9 @@ import {
   chatFolderColorClass,
   type ChatFolderColor,
 } from "@/hooks/use-chat-folders"
-import { uid, useOrbit } from "@/lib/store"
+import { liveApi } from "@/lib/live-api"
+import { syncDeleteFolder, syncUpdateFolder } from "@/lib/live-sync"
+import { useOrbit } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import type { DocFolder } from "@/lib/types"
 
@@ -27,8 +30,7 @@ export const folderColorClass = chatFolderColorClass
 
 /**
  * Create / rename+recolor dialog for library folders. Pass folder=null to
- * create at `parentId` (null = a root-level folder). Local-only for now — the
- * Foundry rewrite will own persistence.
+ * create at `parentId` (null = a root-level folder). Persisted server-side.
  */
 export function DocFolderDialog({
   open,
@@ -51,6 +53,7 @@ export function DocFolderDialog({
 
   const [name, setName] = React.useState("")
   const [color, setColor] = React.useState<ChatFolderColor>("slate")
+  const [saving, setSaving] = React.useState(false)
 
   const [prevOpen, setPrevOpen] = React.useState(open)
   const [prevFolder, setPrevFolder] = React.useState(folder)
@@ -63,25 +66,48 @@ export function DocFolderDialog({
     }
   }
 
-  const save = () => {
+  const save = async () => {
     const trimmed = name.trim()
-    if (!trimmed) return
+    if (!trimmed || saving) return
     if (folder) {
+      // Rename / recolor. Color stays client-side (server has no folder color).
       patchFolder(folder.id, { name: trimmed, color })
-    } else {
-      const created: DocFolder = {
-        id: uid("f"),
+      syncUpdateFolder(folder.id, { name: trimmed })
+      onOpenChange(false)
+      return
+    }
+    // Create. The server issues the real primary key, so create there first
+    // and adopt the returned id.
+    setSaving(true)
+    try {
+      const created = await liveApi.createFolder({
         name: trimmed,
-        parentId,
+        parentId: parentId ?? undefined,
+        accessEmails: liveUserEmail ? [liveUserEmail] : undefined,
+      })
+      const mapped: DocFolder = {
+        id: created.primaryKey,
+        name: created.name,
+        parentId: created.parentId ?? parentId,
         source: "upload",
         color,
-        createdBy: liveUserEmail ?? undefined,
-        accessEmails: liveUserEmail ? [liveUserEmail] : undefined,
+        createdBy: created.createdBy || (liveUserEmail ?? undefined),
+        accessEmails: created.accessEmails.length
+          ? created.accessEmails
+          : liveUserEmail
+            ? [liveUserEmail]
+            : undefined,
       }
-      addFolder(created)
-      onCreated?.(created)
+      addFolder(mapped)
+      onCreated?.(mapped)
+      onOpenChange(false)
+    } catch (error) {
+      toast.error("Couldn't create the folder", {
+        description: error instanceof Error ? error.message : undefined,
+      })
+    } finally {
+      setSaving(false)
     }
-    onOpenChange(false)
   }
 
   return (
@@ -103,7 +129,7 @@ export function DocFolderDialog({
             value={name}
             maxLength={60}
             onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && save()}
+            onKeyDown={(e) => e.key === "Enter" && void save()}
             autoFocus
           />
           <div className="flex items-center gap-2.5">
@@ -129,8 +155,8 @@ export function DocFolderDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={save} disabled={!name.trim()}>
-            {folder ? "Save" : "Create folder"}
+          <Button onClick={() => void save()} disabled={!name.trim() || saving}>
+            {folder ? "Save" : saving ? "Creating…" : "Create folder"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -172,6 +198,9 @@ export function DeleteDocFolderDialog({
   if (!folder) return null
 
   const confirm = () => {
+    // Delete every affected folder server-side (force clears nested mappings);
+    // the store already unfiles contained docs to the library root.
+    for (const id of affected.folderIds) syncDeleteFolder(id)
     removeFolder(folder.id)
     onOpenChange(false)
   }

@@ -277,29 +277,34 @@ export function FolderTree({
             : []
         )}
       </div>
-      <div>
-        <div className="mb-1 flex items-center justify-between px-2">
-          <p className="text-muted-foreground text-xs font-medium">SharePoint</p>
-          <Badge variant="outline" className="h-4 px-1.5 text-[10px]">
-            {spCount} synced
-          </Badge>
+      {/* Only rendered when a SharePoint sync actually exists. */}
+      {(spCount > 0 || roots.some((f) => f.source === "sharepoint")) && (
+        <div>
+          <div className="mb-1 flex items-center justify-between px-2">
+            <p className="text-muted-foreground text-xs font-medium">
+              SharePoint
+            </p>
+            <Badge variant="outline" className="h-4 px-1.5 text-[10px]">
+              {spCount} synced
+            </Badge>
+          </div>
+          {roots.flatMap((folder) =>
+            folder.source === "sharepoint"
+              ? [
+                  <FolderNode
+                    key={folder.id}
+                    folder={folder}
+                    depth={0}
+                    currentFolderId={currentFolderId}
+                    onSelect={onSelect}
+                    index={index}
+                    actions={actions}
+                  />,
+                ]
+              : []
+          )}
         </div>
-        {roots.flatMap((folder) =>
-          folder.source === "sharepoint"
-            ? [
-                <FolderNode
-                  key={folder.id}
-                  folder={folder}
-                  depth={0}
-                  currentFolderId={currentFolderId}
-                  onSelect={onSelect}
-                  index={index}
-                  actions={actions}
-                />,
-              ]
-            : []
-        )}
-      </div>
+      )}
     </div>
   )
 }

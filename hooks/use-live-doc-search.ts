@@ -20,7 +20,6 @@ export function useLiveDocSearch(query: string): {
   results: Doc[]
   searching: boolean
 } {
-  const live = useOrbit((s) => s.live === true)
   const [results, setResults] = React.useState<Doc[]>([])
   const [searching, setSearching] = React.useState(false)
   const requestSeq = React.useRef(0)
@@ -28,7 +27,7 @@ export function useLiveDocSearch(query: string): {
   const q = query.trim()
 
   React.useEffect(() => {
-    if (!live || q.length < MIN_QUERY) {
+    if (q.length < MIN_QUERY) {
       setResults([])
       setSearching(false)
       return
@@ -52,7 +51,7 @@ export function useLiveDocSearch(query: string): {
       }
     }, DEBOUNCE_MS)
     return () => clearTimeout(timer)
-  }, [live, q])
+  }, [q])
 
   return { results, searching }
 }

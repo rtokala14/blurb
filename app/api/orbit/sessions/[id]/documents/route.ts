@@ -1,6 +1,7 @@
 import {
   getSessionRow,
   sanitizeAttachments,
+  sessionOptions,
   updateSessionRow,
 } from "@/lib/foundry/ontology"
 import { errorResponse, json, requireLive } from "@/lib/foundry/http"
@@ -18,9 +19,10 @@ export async function GET(
     const { id } = await params
     const session = await getSessionRow(id, await resolveRequestUser(request))
     if (!session) return json({ error: "Session not found" }, { status: 404 })
+    const options = sessionOptions(session)
     return json({
-      docsAttached: (session.docsAttached ?? []).map(String),
-      foldersAttached: (session.foldersAttached ?? []).map(String),
+      docsAttached: options.docsAttached ?? [],
+      foldersAttached: options.foldersAttached ?? [],
     })
   } catch (error) {
     return errorResponse(error)
@@ -47,10 +49,11 @@ export async function PUT(
       body.docsAttached ?? [],
       body.foldersAttached ?? []
     )
-    await updateSessionRow(id, {
-      docsAttached: sanitized.docsAttached,
-      foldersAttached: sanitized.foldersAttached,
-      updatedAt: new Date().toISOString(),
+    await updateSessionRow(session, {
+      options: {
+        docsAttached: sanitized.docsAttached,
+        foldersAttached: sanitized.foldersAttached,
+      },
     })
     return json({ success: true })
   } catch (error) {

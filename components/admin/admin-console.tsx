@@ -8,7 +8,6 @@ import {
   RefreshCw,
   Search,
   ShieldCheck,
-  Table2,
   Upload,
   Users,
 } from "lucide-react"
@@ -93,7 +92,6 @@ export function AdminConsole() {
   /* overview state */
   const [days, setDays] = React.useState(30)
   const [includeAdmins, setIncludeAdmins] = React.useState(false)
-  const [includeSynced, setIncludeSynced] = React.useState(true)
   const [overview, setOverview] = React.useState<AdminOverview | null>(null)
   const [loadingOverview, setLoadingOverview] = React.useState(true)
   const [showTable, setShowTable] = React.useState(false)
@@ -110,7 +108,7 @@ export function AdminConsole() {
   const loadOverview = React.useCallback(async () => {
     setLoadingOverview(true)
     try {
-      setOverview(await adminApi.overview({ days, includeAdmins, includeSynced }))
+      setOverview(await adminApi.overview({ days, includeAdmins }))
     } catch (error) {
       toast.error("Couldn't load the dashboard", {
         description: error instanceof Error ? error.message : undefined,
@@ -118,7 +116,7 @@ export function AdminConsole() {
     } finally {
       setLoadingOverview(false)
     }
-  }, [days, includeAdmins, includeSynced])
+  }, [days, includeAdmins])
 
   React.useEffect(() => {
     void loadOverview()
@@ -190,10 +188,6 @@ export function AdminConsole() {
               <Switch checked={includeAdmins} onCheckedChange={setIncludeAdmins} />
               Include admin activity
             </Label>
-            <Label className="flex items-center gap-2 text-sm font-normal">
-              <Switch checked={includeSynced} onCheckedChange={setIncludeSynced} />
-              Include SharePoint-synced documents
-            </Label>
             <Button
               variant="ghost"
               size="icon-sm"
@@ -224,7 +218,7 @@ export function AdminConsole() {
                 <StatTile
                   label="Sessions today"
                   value={String(totals.sessionsToday)}
-                  sub={`${totals.thinkingSessionsInRange} thinking-mode in range`}
+                  sub={`${totals.admins} ${totals.admins === 1 ? "admin" : "admins"}`}
                   icon={MessageSquareText}
                 />
                 <StatTile
@@ -236,7 +230,7 @@ export function AdminConsole() {
                 <StatTile
                   label="Documents added today"
                   value={String(totals.docsToday)}
-                  sub={includeSynced ? "manual + synced" : "manual uploads only"}
+                  sub="uploads"
                   icon={FileText}
                 />
               </div>
@@ -246,7 +240,7 @@ export function AdminConsole() {
                 <StatTile
                   label="Documents in corpus"
                   value={compact(totals.corpus.documents)}
-                  sub={`${compact(totals.corpus.manualDocuments)} manual · ${compact(totals.corpus.syncedDocuments)} synced`}
+                  sub={`${compact(totals.corpus.manualDocuments)} uploaded`}
                   icon={FileText}
                 />
                 <Card className="gap-1.5 p-4">
@@ -261,16 +255,16 @@ export function AdminConsole() {
                   </p>
                 </Card>
                 <StatTile
-                  label="Total pages"
-                  value={compact(totals.corpus.totalPages)}
-                  sub="across the active corpus"
-                  icon={Table2}
+                  label="Total users"
+                  value={String(totals.users)}
+                  sub={`${totals.activeUsers} active`}
+                  icon={Users}
                 />
                 <StatTile
-                  label="Unlimited-upload users"
-                  value={String(totals.unlimitedUsers)}
-                  sub="exempt from daily limits"
-                  icon={InfinityIcon}
+                  label="Users near limit"
+                  value={String(totals.usersNearQuota)}
+                  sub="close to daily quota"
+                  icon={Upload}
                 />
               </div>
 
@@ -448,15 +442,13 @@ export function AdminConsole() {
                             />
                             <p className="text-muted-foreground text-xs tabular-nums">
                               {u.uploadsUsedToday} of {u.effectiveLimit}
-                              {u.bonusUploadLimit > 0 && ` (+${u.bonusUploadLimit} bonus)`}
+                              {u.activeBonusUploads > 0 && ` (+${u.activeBonusUploads} bonus)`}
                             </p>
                           </div>
                         )}
                       </TableCell>
                       <TableCell className="hidden text-right tabular-nums md:table-cell">
-                        {u.documents + u.syncedDocuments > 0
-                          ? compact(u.documents + u.syncedDocuments)
-                          : "—"}
+                        {u.documents > 0 ? compact(u.documents) : "—"}
                       </TableCell>
                       <TableCell className="text-muted-foreground hidden text-xs lg:table-cell">
                         {u.updatedAt ? <TimeAgo iso={u.updatedAt} /> : "—"}

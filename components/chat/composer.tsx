@@ -3,7 +3,6 @@
 import * as React from "react"
 import {
   ArrowUp,
-  Brain,
   Briefcase,
   ClipboardCheck,
   ClipboardList,
@@ -45,15 +44,6 @@ const SKILL_ICONS: Record<string, LucideIcon> = {
   sparkles: Sparkles,
 }
 
-const slashCommands = [
-  {
-    command: "/doc",
-    icon: FileText,
-    label: "Draft a document",
-    hint: "Brief, memo, report — grounded in scope",
-  },
-]
-
 type ComposerProps = {
   session: ChatSession
   isBusy: boolean
@@ -83,10 +73,7 @@ function ComposerImpl({
   const scopeIds = new Set(session.scopeDocIds)
   const scopeDocs = docs.filter((d) => scopeIds.has(d.id))
   const showSlash = value.startsWith("/") && !value.includes(" ")
-  const filteredCommands = slashCommands.filter((c) =>
-    c.command.startsWith(value.toLowerCase())
-  )
-  // live mode: "/" opens the document-type picker instead of demo commands
+  // "/" opens the document-type picker
   const skillQuery = value.slice(1).toLowerCase()
   const filteredSkills = DOC_SKILLS.filter(
     (s) =>
@@ -167,7 +154,7 @@ function ComposerImpl({
           )}
         </div>
 
-        {/* Slash menu: live → document skill packs; demo → simulated commands */}
+        {/* Slash menu: document skill packs */}
         {showSlash && live && filteredSkills.length > 0 && (
           <div className="bg-popover mb-2 max-h-72 overflow-y-auto rounded-lg border shadow-md">
             <p className="text-muted-foreground/70 px-3 pt-2 pb-1 text-[10px] font-medium tracking-wide uppercase">
@@ -193,28 +180,6 @@ function ComposerImpl({
             })}
           </div>
         )}
-        {showSlash && !live && filteredCommands.length > 0 && (
-          <div className="bg-popover mb-2 overflow-hidden rounded-lg border shadow-md">
-            {filteredCommands.map((cmd) => (
-              <button type="button"
-                key={cmd.command}
-                className="hover:bg-accent flex w-full items-center gap-3 px-3 py-2 text-left"
-                onClick={() => {
-                  setValue(`${cmd.command} `)
-                  textareaRef.current?.focus()
-                }}
-              >
-                <cmd.icon className="text-muted-foreground size-4" />
-                <div className="flex-1">
-                  <p className="text-sm font-medium">{cmd.label}</p>
-                  <p className="text-muted-foreground text-xs">{cmd.hint}</p>
-                </div>
-                <Kbd>{cmd.command}</Kbd>
-              </button>
-            ))}
-          </div>
-        )}
-
         {/* Input */}
         <div className="focus-within:ring-ring/50 bg-muted/40 relative rounded-xl border transition-shadow focus-within:ring-2">
           <Textarea
@@ -257,36 +222,6 @@ function ComposerImpl({
               </TooltipTrigger>
               <TooltipContent>Draft a document</TooltipContent>
             </Tooltip>
-            {live && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant={session.mode === "thinking" ? "secondary" : "ghost"}
-                    size="sm"
-                    aria-label="Toggle thinking mode"
-                    aria-pressed={session.mode === "thinking"}
-                    className={
-                      session.mode === "thinking"
-                        ? "text-primary h-7 gap-1 px-2 text-xs font-medium"
-                        : "text-muted-foreground h-7 gap-1 px-2 text-xs"
-                    }
-                    onClick={() =>
-                      useOrbit.getState().patchSession(session.id, {
-                        mode: session.mode === "thinking" ? "regular" : "thinking",
-                      })
-                    }
-                  >
-                    <Brain className="size-3.5" />
-                    Think longer
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {session.mode === "thinking"
-                    ? "Deep-research agent is on — slower, more thorough answers"
-                    : "Route this chat to the deep-research agent"}
-                </TooltipContent>
-              </Tooltip>
-            )}
             {live && pendingSkill && (
               <Badge variant="secondary" className="h-7 gap-1.5 pr-1 pl-2 font-normal">
                 {(() => {
@@ -357,7 +292,6 @@ export const Composer = React.memo(ComposerImpl, (prev, next) => {
     prev.onStop === next.onStop &&
     prev.onOpenContext === next.onOpenContext &&
     prev.session.id === next.session.id &&
-    prev.session.mode === next.session.mode &&
     prev.session.scopeDocIds === next.session.scopeDocIds
   )
 })

@@ -1,14 +1,16 @@
-import { getMediaContent } from "@/lib/foundry/client"
+import { getMediaContentByReference, searchObjects } from "@/lib/foundry/client"
+import { canAccessDoc, type DocRow } from "@/lib/foundry/ontology"
 import { errorResponse, json, requireLive } from "@/lib/foundry/http"
+import { resolveRequestUser } from "@/lib/foundry/user"
 
 export const dynamic = "force-dynamic"
 
 /**
  * Stream a media item (the PDF behind a citation's `<source id="ri.mio…">`).
- * Content is immutable per RID, so allow long private caching.
+ * Resolves the owning DocMeta by mediaItemRid and enforces access.
  */
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ rid: string }> }
 ) {
   const guard = requireLive()
@@ -18,7 +20,17 @@ export async function GET(
     if (!/^ri\.mio\.[a-z-]*\.media-item\.[a-zA-Z0-9-]+$/.test(rid)) {
       return json({ error: "Invalid media item RID" }, { status: 400 })
     }
-    const upstream = await getMediaContent(rid)
+    const userEmail = await resolveRequestUser(request)
+    const rows = await searchObjects<DocRow>("OrbitDocsDocMeta", {
+      where: { type: "eq", field: "mediaItemRid", value: rid },
+      maxItems: 1,
+      pageSize: 1,
+    })
+    const doc = rows[0]
+    if (!doc || !doc.mediaReference || !canAccessDoc(doc, userEmail)) {
+      return json({ error: "Media item not found" }, { status: 404 })
+    }
+    const upstream = await getMediaContentByReference(doc.mediaReference)
     if (!upstream.ok || !upstream.body) {
       return json(
         { error: `Media fetch failed (${upstream.status})` },
@@ -28,7 +40,7 @@ export async function GET(
     return new Response(upstream.body, {
       headers: {
         "Content-Type":
-          upstream.headers.get("Content-Type") ?? "application/pdf",
+          upstream.headers.get("Content-Type") ?? doc.mime ?? "application/pdf",
         "Cache-Control": "private, max-age=1200",
         "Content-Disposition": "inline",
       },

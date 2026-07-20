@@ -4,9 +4,9 @@ import { getFoundryConfig } from "./config"
 import { getFoundryToken } from "./token"
 
 /**
- * Minimal Foundry REST client built directly on the platform openapi.yml —
- * no SDK. Covers ontology object search/get, action apply, query execute,
- * AIP agent sessions (create/stream/trace), and media set content.
+ * Minimal Foundry REST client built directly on the platform openapi spec —
+ * no SDK. Covers ontology object search/get/aggregate, action apply, query
+ * execute, and media set upload/content for the v3 pipeline.
  */
 
 export class FoundryError extends Error {
@@ -71,8 +71,10 @@ export async function foundryJson<T>(
 export type WhereClause =
   | { type: "eq"; field: string; value: unknown }
   | { type: "gte"; field: string; value: unknown }
+  | { type: "lt"; field: string; value: unknown }
   | { type: "in"; field: string; value: unknown[] }
   | { type: "contains"; field: string; value: unknown }
+  | { type: "isNull"; field: string; value: boolean }
   | { type: "containsAllTerms"; field: string; value: string }
   | { type: "containsAnyTerm"; field: string; value: string }
   | { type: "containsAllTermsInOrder"; field: string; value: string }
@@ -148,7 +150,7 @@ export async function getObject<T = Record<string, unknown>>(
   return (await res.json()) as T
 }
 
-/** Foundry caps `in` filter cardinality; chunk under it (matches PoC). */
+/** Foundry caps `in` filter cardinality; chunk under it. */
 export const IN_FILTER_CHUNK = 100
 
 export async function getObjectsByIds<T = Record<string, unknown>>(
@@ -181,6 +183,50 @@ export async function getObjectsByIds<T = Record<string, unknown>>(
 }
 
 /* ------------------------------------------------------------------ */
+/* Ontology: aggregation                                                */
+/* ------------------------------------------------------------------ */
+
+interface AggregateResponse {
+  data?: {
+    group?: Record<string, unknown>
+    metrics?: { name?: string; value?: unknown }[]
+  }[]
+}
+
+/**
+ * Count objects matching `where`, optionally grouped by an exact field.
+ * Returns a map of group value → count ("" key when ungrouped).
+ */
+export async function countObjects(
+  objectType: string,
+  {
+    where,
+    groupByField,
+    maxGroupCount = 10_000,
+  }: { where?: WhereClause; groupByField?: string; maxGroupCount?: number } = {}
+): Promise<Map<string, number>> {
+  const cfg = getFoundryConfig()
+  const body: Record<string, unknown> = {
+    aggregation: [{ type: "count", name: "count" }],
+  }
+  if (where) body.where = where
+  if (groupByField) {
+    body.groupBy = [{ type: "exact", field: groupByField, maxGroupCount }]
+  }
+  const res = await foundryJson<AggregateResponse>(
+    `/api/v2/ontologies/${cfg.ontology}/objects/${objectType}/aggregate`,
+    { method: "POST", body: JSON.stringify(body) }
+  )
+  const out = new Map<string, number>()
+  for (const row of res.data ?? []) {
+    const key = groupByField ? String(row.group?.[groupByField] ?? "") : ""
+    const metric = row.metrics?.find((m) => m.name === "count")
+    out.set(key, Number(metric?.value ?? 0))
+  }
+  return out
+}
+
+/* ------------------------------------------------------------------ */
 /* Ontology: actions & queries                                          */
 /* ------------------------------------------------------------------ */
 
@@ -192,7 +238,7 @@ interface ActionEdits {
 
 /**
  * Apply an ontology action (kebab-case api name, e.g.
- * "create-orbit-docs-user-sessions").
+ * "create-orbit-docs-doc-meta").
  */
 export async function applyAction<T = ActionEdits>(
   actionApiName: string,
@@ -200,7 +246,7 @@ export async function applyAction<T = ActionEdits>(
   { returnEdits = false }: { returnEdits?: boolean } = {}
 ): Promise<T> {
   const cfg = getFoundryConfig()
-  // Foundry rejects explicit nulls for omitted params — strip undefined/null.
+  // Foundry rejects explicit nulls for omitted params — strip undefined.
   const cleaned: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(parameters)) {
     if (value !== undefined) cleaned[key] = value
@@ -242,45 +288,21 @@ export async function executeQuery<T = unknown>(
 }
 
 /* ------------------------------------------------------------------ */
-/* AIP Agents                                                           */
+/* AIP Agents (platform Sessions API, all endpoints need ?preview=true) */
 /* ------------------------------------------------------------------ */
 
 export interface AipSession {
   rid: string
+  agentRid?: string
   agentVersion?: string
 }
 
-export async function createAipSession(
-  agentRid: string,
-  agentVersion?: string | null
-): Promise<AipSession> {
-  try {
-    return await foundryJson<AipSession>(
-      `/api/v2/aipAgents/agents/${agentRid}/sessions`,
-      {
-        method: "POST",
-        searchParams: { preview: "true" },
-        body: JSON.stringify(agentVersion ? { agentVersion } : {}),
-      }
-    )
-  } catch (error) {
-    // Pinned version may have been deleted — retry on latest (matches PoC).
-    if (
-      agentVersion &&
-      error instanceof FoundryError &&
-      (error.detail?.includes("AgentVersionNotFound") || error.status === 404)
-    ) {
-      return foundryJson<AipSession>(
-        `/api/v2/aipAgents/agents/${agentRid}/sessions`,
-        {
-          method: "POST",
-          searchParams: { preview: "true" },
-          body: JSON.stringify({}),
-        }
-      )
-    }
-    throw error
-  }
+export async function createAipSession(agentRid: string): Promise<AipSession> {
+  return foundryJson<AipSession>(`/api/v2/aipAgents/agents/${agentRid}/sessions`, {
+    method: "POST",
+    searchParams: { preview: "true" },
+    body: JSON.stringify({}),
+  })
 }
 
 export interface StreamingContinueInput {
@@ -288,8 +310,8 @@ export interface StreamingContinueInput {
   sessionRid: string
   userInput: string
   parameterInputs?: Record<string, unknown>
-  messageId: string
-  sessionTraceId: string
+  messageId?: string
+  sessionTraceId?: string
 }
 
 /**
@@ -301,9 +323,9 @@ export async function streamingContinue(
 ): Promise<Response> {
   const payload: Record<string, unknown> = {
     userInput: { text: input.userInput },
-    messageId: input.messageId,
-    sessionTraceId: input.sessionTraceId,
   }
+  if (input.messageId) payload.messageId = input.messageId
+  if (input.sessionTraceId) payload.sessionTraceId = input.sessionTraceId
   if (input.parameterInputs && Object.keys(input.parameterInputs).length > 0) {
     payload.parameterInputs = input.parameterInputs
   }
@@ -316,24 +338,6 @@ export async function streamingContinue(
       body: JSON.stringify(payload),
     }
   )
-}
-
-export async function getSessionTrace(
-  agentRid: string,
-  sessionRid: string,
-  traceId: string
-): Promise<
-  | ({ status?: string } & import("./turn").RawSessionTrace)
-  | null
-> {
-  try {
-    return await foundryJson(
-      `/api/v2/aipAgents/agents/${agentRid}/sessions/${sessionRid}/sessionTraces/${traceId}`,
-      { searchParams: { preview: "true" } }
-    )
-  } catch {
-    return null
-  }
 }
 
 export async function getAipSessionContent(
@@ -355,12 +359,8 @@ export async function getAipSessionContent(
 export async function getAgent(agentRid: string): Promise<{
   rid: string
   version?: string
-  metadata?: {
-    displayName?: string
-    description?: string
-    inputPlaceholder?: string
-    suggestedPrompts?: string[]
-  }
+  metadata?: { displayName?: string; description?: string }
+  parameters?: Record<string, unknown>
 }> {
   return foundryJson(`/api/v2/aipAgents/agents/${agentRid}`, {
     searchParams: { preview: "true" },
@@ -370,18 +370,6 @@ export async function getAgent(agentRid: string): Promise<{
 /* ------------------------------------------------------------------ */
 /* Media sets                                                           */
 /* ------------------------------------------------------------------ */
-
-export const MEDIA_SET_RID =
-  process.env.ORBIT_MEDIA_SET_RID ||
-  "ri.mio.main.media-set.5254ad72-d81f-413c-951e-ad2fba693cb6"
-
-/** Stream a media item's binary content (PDF pages for citations). */
-export async function getMediaContent(mediaItemRid: string): Promise<Response> {
-  return foundryFetch(
-    `/api/v2/mediasets/${MEDIA_SET_RID}/items/${mediaItemRid}/content`,
-    { searchParams: { preview: "true" } }
-  )
-}
 
 export interface MediaReference {
   mimeType: string
@@ -396,10 +384,28 @@ export interface MediaReference {
 }
 
 /**
- * Upload bytes as a temporary media item (persisted when an ontology action
- * references it within 1 hour). Returns the complete MediaReference to pass
- * as the OrbitDocsList `reference` action parameter — matches the SDK's
- * ontology.media.upload_media used by the PoC.
+ * Stream a media item's binary content. The v3 model carries the full
+ * MediaReference on every OrbitDocsDocMeta row, so reads are addressed by
+ * the media set + item the reference points at (no hardcoded set RID).
+ */
+export async function getMediaContentByReference(
+  reference: MediaReference
+): Promise<Response> {
+  const item = reference.reference?.mediaSetViewItem
+  if (!item?.mediaSetRid || !item.mediaItemRid) {
+    throw new FoundryError("Media reference is missing set/item RIDs", 422)
+  }
+  return foundryFetch(
+    `/api/v2/mediasets/${item.mediaSetRid}/items/${item.mediaItemRid}/content`,
+    { searchParams: { preview: "true" } }
+  )
+}
+
+/**
+ * Upload bytes as a temporary media item (persisted into the property's
+ * backing media set when an ontology action references it within 1 hour).
+ * Returns the complete MediaReference to pass as the create-doc-meta
+ * `mediaReference` action parameter.
  */
 export async function uploadMedia(
   bytes: ArrayBuffer | Uint8Array,
@@ -420,4 +426,12 @@ export async function uploadMedia(
     )
   }
   return (await res.json()) as MediaReference
+}
+
+/** Extract the media item RID from a MediaReference (or null). */
+export function extractMediaItemRid(
+  reference: MediaReference | null | undefined
+): string | null {
+  const rid = reference?.reference?.mediaSetViewItem?.mediaItemRid
+  return rid && rid.startsWith("ri.") ? rid : null
 }

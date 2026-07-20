@@ -8,11 +8,11 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/
 import { useOrbit } from "@/lib/store"
 
 export default function AdminPage() {
-  const live = useOrbit((s) => s.live)
+  const ready = useOrbit((s) => s.ready)
   const isAdmin = useOrbit((s) => s.liveIsAdmin)
 
-  if (live === null) return null
-  if (!live || !isAdmin) {
+  if (!ready) return null
+  if (!isAdmin) {
     return (
       <Empty className="h-full">
         <EmptyHeader>
@@ -21,9 +21,7 @@ export default function AdminPage() {
           </EmptyMedia>
           <EmptyTitle>Admin access required</EmptyTitle>
           <EmptyDescription>
-            {live
-              ? "Your account doesn't have admin permissions. Ask an existing admin to grant access."
-              : "The admin console is available in live mode only."}
+            Your account doesn't have admin permissions. Ask an existing admin to grant access.
           </EmptyDescription>
         </EmptyHeader>
       </Empty>

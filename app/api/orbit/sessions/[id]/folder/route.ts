@@ -1,17 +1,15 @@
-import {
-  getChatFolder,
-  getSessionRow,
-  normalizeEmail,
-  updateSessionRow,
-} from "@/lib/foundry/ontology"
+import { getSessionRow, updateSessionRow } from "@/lib/foundry/ontology"
 import { errorResponse, json, requireLive } from "@/lib/foundry/http"
-import { resolveRequestUser } from "@/lib/foundry/user"
+import {
+  getProvisionedUser,
+  listChatFolders,
+  resolveRequestUser,
+} from "@/lib/foundry/user"
 
 export const dynamic = "force-dynamic"
 
 /**
- * File a session into a chat folder, or unfile it with folderId: null
- * (PoC PUT /api/sessions/{id}/folder).
+ * File a session into a chat folder, or unfile it with folderId: null.
  */
 export async function PUT(
   request: Request,
@@ -28,18 +26,13 @@ export async function PUT(
     const body = (await request.json()) as { folderId?: string | null }
     const folderId = body.folderId ?? null
     if (folderId !== null) {
-      const folder = await getChatFolder(folderId)
-      if (!folder) {
+      const userRow = await getProvisionedUser(userEmail)
+      const folders = userRow ? listChatFolders(userRow) : []
+      if (!folders.some((f) => f.id === folderId)) {
         return json({ error: "Chat folder not found" }, { status: 404 })
       }
-      if (normalizeEmail(folder.createdBy) !== normalizeEmail(userEmail)) {
-        return json({ error: "Access denied to this folder" }, { status: 403 })
-      }
     }
-    await updateSessionRow(id, {
-      chatFolderId: folderId,
-      updatedAt: new Date().toISOString(),
-    })
+    await updateSessionRow(session, { options: { chatFolderId: folderId } })
     return json({ success: true, folderId })
   } catch (error) {
     return errorResponse(error)

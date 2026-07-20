@@ -3,17 +3,10 @@
 import { create } from "zustand"
 
 import {
-  seedActivity,
-  seedArtifacts,
-  seedDocs,
-  seedFolders,
-  seedSessions,
-  seedSites,
-} from "@/lib/data"
-import {
   syncDeleteDoc,
   syncDeleteSession,
   syncSessionScope,
+  syncSetActiveLeaf,
 } from "@/lib/live-sync"
 import {
   DEFAULT_USER_PROFILE,
@@ -29,7 +22,6 @@ import type {
   ChatSession,
   Doc,
   DocFolder,
-  SessionBranchMeta,
   SharePointSite,
 } from "@/lib/types"
 
@@ -47,18 +39,20 @@ interface OrbitState {
   sites: SharePointSite[]
   activity: ActivityItem[]
 
-  /** null = probing /api/orbit/config; false = demo simulation; true = Foundry */
-  live: boolean | null
+  /** signed-in identity, resolved from /api/orbit/config against Foundry */
   liveUserEmail: string | null
   liveIsAdmin: boolean
-  /** live mode: bootstrap data has landed (gate demo seeds until then) */
-  liveHydrated: boolean
+  /** true once config + bootstrap have resolved (success or hard error) */
+  ready: boolean
+  /** set when Foundry is unreachable/unconfigured — the app has no demo mode */
+  configError: string | null
 
   activeSessionId: string
   /** artifact currently open in the chat-side Studio panel (null = closed) */
   openArtifactId: string | null
 
-  setLive: (live: boolean, userEmail?: string, isAdmin?: boolean) => void
+  setIdentity: (userEmail: string, isAdmin: boolean) => void
+  setConfigError: (message: string) => void
   hydrateLive: (data: {
     docs: Doc[]
     folders: DocFolder[]
@@ -81,17 +75,15 @@ interface OrbitState {
     leafId: string | null
   ) => void
   /**
-   * Apply a full live-transcript load (messages + leaf + branches + derived
-   * artifacts) in a single store update, so opening a session triggers one
-   * render pass instead of three.
+   * Apply a full live-transcript load (messages + leaf + derived artifacts) in
+   * a single store update, so opening a session triggers one render pass
+   * instead of three.
    */
   hydrateSessionContent: (payload: {
     sessionId: string
     messages: Record<string, ChatMessage>
     leafId: string | null
     artifacts: Artifact[]
-    branches: SessionBranchMeta[]
-    activeBranchId: string | null
   }) => void
 
   /* documents */
@@ -142,22 +134,23 @@ interface OrbitState {
 }
 
 export const useOrbit = create<OrbitState>((set) => ({
-  folders: seedFolders,
-  docs: seedDocs,
-  sessions: seedSessions,
-  artifacts: seedArtifacts,
-  sites: seedSites,
-  activity: seedActivity,
+  folders: [],
+  docs: [],
+  sessions: [],
+  artifacts: [],
+  sites: [],
+  activity: [],
 
-  activeSessionId: seedSessions[0].id,
+  activeSessionId: "",
   openArtifactId: null,
-  live: null,
   liveUserEmail: null,
   liveIsAdmin: false,
-  liveHydrated: false,
+  ready: false,
+  configError: null,
 
-  setLive: (live, userEmail, isAdmin) =>
-    set({ live, liveUserEmail: userEmail ?? null, liveIsAdmin: Boolean(isAdmin) }),
+  setIdentity: (userEmail, isAdmin) =>
+    set({ liveUserEmail: userEmail, liveIsAdmin: Boolean(isAdmin) }),
+  setConfigError: (message) => set({ configError: message, ready: true }),
   hydrateLive: (data) =>
     set((s) => ({
       docs: data.docs,
@@ -165,7 +158,7 @@ export const useOrbit = create<OrbitState>((set) => ({
       sessions: data.sessions,
       sites: data.sites,
       chatFolders: data.chatFolders ?? [],
-      liveHydrated: true,
+      ready: true,
       activeSessionId:
         data.sessions.find((x) => x.id === s.activeSessionId)?.id ??
         data.sessions[0]?.id ??
@@ -211,8 +204,7 @@ export const useOrbit = create<OrbitState>((set) => ({
     })),
   hydrateSessionContent: (payload) =>
     set((s) => {
-      const { sessionId, messages, leafId, artifacts, branches, activeBranchId } =
-        payload
+      const { sessionId, messages, leafId, artifacts } = payload
       const sessions = s.sessions.map((x) =>
         x.id === sessionId
           ? {
@@ -220,8 +212,6 @@ export const useOrbit = create<OrbitState>((set) => ({
             messages,
             leafId,
             contentLoaded: true,
-            branches,
-            activeBranchId,
           }
           : x
       )
@@ -377,12 +367,16 @@ export const useOrbit = create<OrbitState>((set) => ({
         }
       }),
     })),
-  setLeaf: (sessionId, leafId) =>
+  setLeaf: (sessionId, leafId) => {
+    // Switching branches is a pure tree op — persist the chosen tip so the
+    // server-side cursor follows (best-effort; the optimistic UI already moved).
+    syncSetActiveLeaf(sessionId, leafId)
     set((s) => ({
       sessions: s.sessions.map((x) =>
         x.id === sessionId ? { ...x, leafId } : x
       ),
-    })),
+    }))
+  },
 
   addArtifact: (artifact) =>
     set((s) => ({ artifacts: [artifact, ...s.artifacts] })),

@@ -7,13 +7,13 @@ import { useOrbit } from "@/lib/store"
 
 /**
  * Recover an in-flight run after a refresh or dropped stream. When a live
- * session opens with runStatus "in_progress", poll /run (which finalizes a
- * completed run server-side from AIP session content) and reload the
- * transcript once it settles.
+ * session opens with runStatus "in_progress", poll /run until the status
+ * settles to "idle" (completed) or "failed", then reload the message tree.
  *
  * Deliberately defensive: bounded attempts, backoff on errors, cancels on
  * session switch/unmount, and only ever runs when this client isn't itself
- * streaming (the stream path owns the run then).
+ * streaming (the stream path owns the run then). There is no trace status in
+ * v3 — recovery is purely status polling + a content refetch.
  */
 const POLL_MS = 5_000
 const MAX_POLLS = 36 // ~3 minutes, matching the server's turn ceiling
@@ -31,7 +31,6 @@ export function useRunRecovery(
       return
     }
     const store = useOrbit.getState()
-    if (store.live !== true) return
     const session = store.sessions.find((s) => s.id === sessionId)
     if (!session?.live || session.runStatus !== "in_progress") return
 
@@ -55,7 +54,7 @@ export function useRunRecovery(
         const run = await liveApi.run(sessionId)
         if (cancelled) return
         errors = 0
-        if (run.status === "complete" || run.status === "idle") {
+        if (run.status === "idle") {
           useOrbit.getState().patchSession(sessionId, { runStatus: "idle" })
           await finish(true)
           return

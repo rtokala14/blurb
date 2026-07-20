@@ -1,123 +1,142 @@
 import "server-only"
 
-import { searchObjects } from "./client"
-import { normalizeEmail } from "./ontology"
-import { effectiveDailyLimit, todayUtc } from "./quota"
-import { deriveNameFromEmail, type OrbitUserRow } from "./user"
+import { countObjects, searchObjects } from "./client"
+import {
+  activeBonusUploads,
+  listAllGrants,
+  normalizeEmail,
+  parseOptions,
+  sessionOptions,
+  type GrantRow,
+  type SessionRow,
+} from "./ontology"
+import { startOfTodayUtc } from "./quota"
+import {
+  deriveNameFromEmail,
+  isAdminUser,
+  listAllUsers,
+  userDailyLimit,
+  type OrbitUserRow,
+} from "./user"
 
 /**
- * Admin metrics — the PoC's /api/admin/dashboard + /api/admin/analytics
- * merged into one bounded collector. Trends use ontology-side createdAt >=
- * range filters with projected columns; the full-corpus document census
- * (19k+ rows) is cached for five minutes.
+ * Admin metrics over the v3 model. Upload usage is derived from DocMeta
+ * uploadTs (no usage object); bonuses come from RateLimitGrants; indexing
+ * truth is chunk counts per document.
  */
 
+export { listAllUsers }
+
 interface SessionLite {
-  __primaryKey: string
-  primaryKey_?: string
-  user?: string
-  createdAt?: string
-  updatedAt?: string
-  isDeleted?: boolean
-  mode?: string
+  __primaryKey?: string
+  sessionId?: string
+  userEmail?: string
   title?: string
-  currentRunStatus?: string
+  createdAt?: string
+  lastUpdatedAt?: string
+  isDeleted?: boolean | null
+  options?: string
 }
 
 interface MessageLite {
   sessionId?: string
   createdAt?: string
-  isAgent?: boolean
+  role?: string
 }
 
 interface DocLite {
-  addedBy?: string
-  createdAt?: string
-  isActive?: boolean
-  isIndexed?: boolean
-  noPages?: number
-  sourceType?: string
-}
-
-interface UsageLite {
-  email?: string
-  usageDate?: string
-  uploadsUsed?: number
+  __primaryKey?: string
+  documentId?: string
+  userEmail?: string
+  uploadTs?: string
 }
 
 export interface AdminUserSummary {
   primaryKey: string
   email: string
   name: string
+  role: string
   isAdmin: boolean
   isActive: boolean
-  hasUnlimitedUploads: boolean
+  isOnboarded: boolean
+  isAllowedToUpload: boolean
   dailyUploadLimit: number
-  bonusUploadLimit: number
-  bonusExpiresAt: string | null
+  activeBonusUploads: number
   effectiveLimit: number | null
   uploadsUsedToday: number
   uploadsRemainingToday: number | null
   documents: number
-  syncedDocuments: number
   createdAt: string | null
   updatedAt: string | null
 }
 
 export function serializeAdminUser(
   user: OrbitUserRow,
-  usageToday: number,
-  docCounts?: { manual: number; synced: number }
+  {
+    usageToday = 0,
+    grants = [],
+    documents = 0,
+  }: { usageToday?: number; grants?: GrantRow[]; documents?: number } = {}
 ): AdminUserSummary {
-  const limit = effectiveDailyLimit(user)
+  const admin = isAdminUser(user)
+  const bonus = activeBonusUploads(grants)
+  const limit = admin ? null : userDailyLimit(user) + bonus
   return {
-    primaryKey: String(user.primaryKey_ ?? user.__primaryKey ?? ""),
+    primaryKey: String(user.__primaryKey ?? user.email ?? ""),
     email: normalizeEmail(user.email),
     name: user.name || deriveNameFromEmail(user.email ?? ""),
-    isAdmin: Boolean(user.isAdmin),
-    isActive: user.isActive !== false,
-    hasUnlimitedUploads: Boolean(user.hasUnlimitedUploads),
-    dailyUploadLimit: Number(user.dailyUploadLimit ?? 0) || 0,
-    bonusUploadLimit: Number(user.bonusUploadLimit ?? 0) || 0,
-    bonusExpiresAt: user.bonusExpiresAt ?? null,
+    role: user.role ?? "user",
+    isAdmin: admin,
+    isActive: true,
+    isOnboarded: user.isOnboarded === true,
+    isAllowedToUpload: admin || user.isAllowedToUpload === true,
+    dailyUploadLimit: userDailyLimit(user),
+    activeBonusUploads: bonus,
     effectiveLimit: limit,
     uploadsUsedToday: usageToday,
-    uploadsRemainingToday: limit === null ? null : Math.max(limit - usageToday, 0),
-    documents: docCounts?.manual ?? 0,
-    syncedDocuments: docCounts?.synced ?? 0,
+    uploadsRemainingToday:
+      limit === null ? null : Math.max(limit - usageToday, 0),
+    documents,
     createdAt: user.createdAt ?? null,
     updatedAt: user.updatedAt ?? null,
   }
 }
 
-export async function listAllUsers(): Promise<OrbitUserRow[]> {
-  return searchObjects<OrbitUserRow>("OrbitDocsUser", { pageSize: 1000 })
-}
-
+/** Uploads since UTC midnight, grouped by uploader. */
 export async function usageTodayByEmail(): Promise<Map<string, number>> {
-  const rows = await searchObjects<UsageLite>("OrbitDocsUserDailyUploadUsage", {
-    where: { type: "eq", field: "usageDate", value: todayUtc() },
-    pageSize: 2000,
+  const counts = await countObjects("OrbitDocsDocMeta", {
+    where: { type: "gte", field: "uploadTs", value: startOfTodayUtc() },
+    groupByField: "userEmail",
   })
   const map = new Map<string, number>()
-  for (const row of rows) {
-    map.set(normalizeEmail(row.email), Number(row.uploadsUsed ?? 0) || 0)
+  for (const [email, count] of counts) {
+    map.set(normalizeEmail(email), count)
+  }
+  return map
+}
+
+/** Active grants grouped by user email. */
+export async function grantsByEmail(): Promise<Map<string, GrantRow[]>> {
+  const grants = await listAllGrants()
+  const map = new Map<string, GrantRow[]>()
+  for (const grant of grants) {
+    const email = normalizeEmail(grant.userEmail)
+    if (!email) continue
+    const list = map.get(email) ?? []
+    list.push(grant)
+    map.set(email, list)
   }
   return map
 }
 
 /* ------------------------------------------------------------------ */
-/* Document census (full corpus, cached)                                */
+/* Document census (cached)                                             */
 /* ------------------------------------------------------------------ */
 
 export interface DocCensus {
-  totalActive: number
+  total: number
   indexed: number
-  synced: number
-  syncedIndexed: number
-  manualPages: number
-  syncedPages: number
-  byOwner: Map<string, { manual: number; synced: number }>
+  byOwner: Map<string, number>
 }
 
 let censusCache: { at: number; census: DocCensus } | null = null
@@ -130,62 +149,21 @@ export async function getDocCensus(): Promise<DocCensus> {
   }
   if (censusInFlight) return censusInFlight
   censusInFlight = (async () => {
-    // isIndexed on the doc row is stale tenant-wide — indexing truth lives in
-    // OrbitDocIndexStatus (same join the rest of the app uses).
-    const [rows, statusRows] = await Promise.all([
-      searchObjects<DocLite & { primaryKey_?: string; __primaryKey?: string }>(
-        "OrbitDocsList",
-        {
-          where: { type: "eq", field: "isActive", value: true },
-          select: ["primaryKey_", "addedBy", "noPages", "sourceType"],
-          pageSize: 10_000,
-          maxItems: 100_000,
-        }
-      ),
-      searchObjects<{ docKey?: string; isIndexingComplete?: boolean }>(
-        "OrbitDocIndexStatus",
-        {
-          select: ["docKey", "isIndexingComplete"],
-          pageSize: 10_000,
-          maxItems: 100_000,
-        }
-      ),
+    const [docsByOwner, chunkedDocs] = await Promise.all([
+      countObjects("OrbitDocsDocMeta", { groupByField: "userEmail" }),
+      // distinct documents with at least one chunk = indexed documents
+      countObjects("OrbitDocsChunks", { groupByField: "documentId" }),
     ])
-    const indexedKeys = new Set(
-      statusRows.flatMap((s) =>
-        s.isIndexingComplete && s.docKey ? [String(s.docKey)] : []
-      )
-    )
-    const census: DocCensus = {
-      totalActive: 0,
-      indexed: 0,
-      synced: 0,
-      syncedIndexed: 0,
-      manualPages: 0,
-      syncedPages: 0,
-      byOwner: new Map(),
+    const byOwner = new Map<string, number>()
+    let total = 0
+    for (const [email, count] of docsByOwner) {
+      byOwner.set(normalizeEmail(email), count)
+      total += count
     }
-    for (const row of rows) {
-      census.totalActive++
-      const synced = Boolean((row.sourceType ?? "").trim())
-      const pages = Number(row.noPages ?? 0) || 0
-      if (synced) {
-        census.synced++
-        census.syncedPages += pages
-      } else {
-        census.manualPages += pages
-      }
-      if (indexedKeys.has(String(row.primaryKey_ ?? row.__primaryKey ?? ""))) {
-        census.indexed++
-        if (synced) census.syncedIndexed++
-      }
-      const owner = normalizeEmail(row.addedBy)
-      if (owner) {
-        const counts = census.byOwner.get(owner) ?? { manual: 0, synced: 0 }
-        if (synced) counts.synced++
-        else counts.manual++
-        census.byOwner.set(owner, counts)
-      }
+    const census: DocCensus = {
+      total,
+      indexed: [...chunkedDocs.keys()].filter(Boolean).length,
+      byOwner,
     }
     censusCache = { at: Date.now(), census }
     return census
@@ -202,7 +180,6 @@ export async function getDocCensus(): Promise<DocCensus> {
 export interface OverviewOptions {
   days: number
   includeAdmins: boolean
-  includeSynced: boolean
 }
 
 const dayKey = (iso: string | undefined): string | null => {
@@ -218,39 +195,34 @@ export async function collectOverview(options: OverviewOptions) {
     Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate())
   ).toISOString()
 
-  const [users, usageToday, census, sessions, messages, docsInRange] =
+  const [users, usageToday, allGrants, census, sessions, messages, docsInRange] =
     await Promise.all([
       listAllUsers(),
       usageTodayByEmail(),
+      grantsByEmail(),
       getDocCensus(),
-      searchObjects<SessionLite>("OrbitDocsUserSessions", {
+      searchObjects<SessionLite>("OrbitDocsChatSessions", {
         where: { type: "gte", field: "createdAt", value: startIso },
-        select: ["primaryKey_", "user", "createdAt", "isDeleted", "mode"],
+        select: ["sessionId", "userEmail", "createdAt", "isDeleted"],
         pageSize: 5000,
         maxItems: 50_000,
       }),
-      searchObjects<MessageLite>("OrbitSessionMessages", {
+      searchObjects<MessageLite>("OrbitDocsChatMessages", {
         where: { type: "gte", field: "createdAt", value: startIso },
-        select: ["sessionId", "createdAt", "isAgent"],
+        select: ["sessionId", "createdAt", "role"],
         pageSize: 10_000,
         maxItems: 100_000,
       }),
-      searchObjects<DocLite>("OrbitDocsList", {
-        where: {
-          type: "and",
-          value: [
-            { type: "eq", field: "isActive", value: true },
-            { type: "gte", field: "createdAt", value: startIso },
-          ],
-        },
-        select: ["addedBy", "createdAt", "sourceType"],
+      searchObjects<DocLite>("OrbitDocsDocMeta", {
+        where: { type: "gte", field: "uploadTs", value: startIso },
+        select: ["documentId", "userEmail", "uploadTs"],
         pageSize: 10_000,
         maxItems: 100_000,
       }),
     ])
 
   const adminEmails = new Set(
-    users.flatMap((u) => (u.isAdmin ? [normalizeEmail(u.email)] : []))
+    users.flatMap((u) => (isAdminUser(u) ? [normalizeEmail(u.email)] : []))
   )
   adminEmails.delete("")
   const excludeOwner = (owner: string) =>
@@ -281,13 +253,12 @@ export async function collectOverview(options: OverviewOptions) {
   /* sessions */
   const sessionOwner = new Map<string, string>()
   const excludedSessionIds = new Set<string>()
-  const today = todayUtc()
+  const today = new Date().toISOString().slice(0, 10)
   let sessionsToday = 0
-  let thinkingSessions = 0
   for (const session of sessions) {
-    if (session.isDeleted) continue
-    const owner = normalizeEmail(session.user)
-    const id = String(session.primaryKey_ ?? session.__primaryKey ?? "")
+    if (session.isDeleted === true) continue
+    const owner = normalizeEmail(session.userEmail)
+    const id = String(session.sessionId ?? session.__primaryKey ?? "")
     if (excludeOwner(owner)) {
       if (id) excludedSessionIds.add(id)
       continue
@@ -302,12 +273,11 @@ export async function collectOverview(options: OverviewOptions) {
       }
     }
     if (key === today) sessionsToday++
-    if (session.mode === "thinking") thinkingSessions++
   }
 
   /* turns (user messages only — one turn per exchange) */
   for (const message of messages) {
-    if (message.isAgent) continue
+    if (message.role === "assistant") continue
     const sessionId = String(message.sessionId ?? "")
     if (excludedSessionIds.has(sessionId)) continue
     const key = dayKey(message.createdAt)
@@ -322,63 +292,44 @@ export async function collectOverview(options: OverviewOptions) {
 
   /* documents added in range */
   let docsTodayCount = 0
+  let uploadsToday = 0
   for (const doc of docsInRange) {
-    const synced = Boolean((doc.sourceType ?? "").trim())
-    if (synced && !options.includeSynced) continue
-    const owner = normalizeEmail(doc.addedBy)
-    // synced arrivals are organizational, not the owning admin's activity
-    if (!synced && excludeOwner(owner)) continue
-    const key = dayKey(doc.createdAt)
+    const owner = normalizeEmail(doc.userEmail)
+    if (excludeOwner(owner)) continue
+    const key = dayKey(doc.uploadTs)
     if (!key || !trends.has(key)) continue
     if (key === today) docsTodayCount++
-    // The trend series charts MANUAL uploads only: a bulk sync lands tens of
-    // thousands of rows in one day and flattens every activity series to
-    // zero (mixed scales). Synced volume lives in the corpus tiles.
-    if (synced) continue
     trends.get(key)!.documents++
     if (owner) {
       dayUsers.get(key)!.add(owner)
       bump(owner, "documents")
     }
   }
-
-  for (const key of keys) {
-    trends.get(key)!.uniqueUsers = dayUsers.get(key)!.size
-  }
-
-  /* uploads today from usage rows */
-  let uploadsToday = 0
   for (const [email, used] of usageToday) {
     if (excludeOwner(email)) continue
     uploadsToday += used
   }
 
-  /* corpus totals honoring the synced toggle. Indexing coverage is a
-     corpus-quality metric, so its base only follows the synced toggle —
-     never the admin toggle. */
-  const indexedBase = options.includeSynced
-    ? census.totalActive
-    : census.totalActive - census.synced
-  const corpusIndexed = options.includeSynced
-    ? census.indexed
-    : census.indexed - census.syncedIndexed
-  let corpusDocs = indexedBase
+  for (const key of keys) {
+    trends.get(key)!.uniqueUsers = dayUsers.get(key)!.size
+  }
+
+  /* corpus totals */
+  let corpusDocs = census.total
   if (!options.includeAdmins) {
-    // Only manual docs are admin *activity* — synced corpus content stays
-    // regardless of which service identity registered it.
     for (const email of adminEmails) {
-      const counts = census.byOwner.get(email)
-      if (counts) corpusDocs -= counts.manual
+      corpusDocs -= census.byOwner.get(email) ?? 0
     }
   }
 
   /* near-quota users */
   const nearQuota = users.flatMap((u) => {
-    if (!(u.isActive !== false && (options.includeAdmins || !u.isAdmin))) return []
-    const serialized = serializeAdminUser(
-      u,
-      usageToday.get(normalizeEmail(u.email)) ?? 0
-    )
+    if (!options.includeAdmins && isAdminUser(u)) return []
+    const email = normalizeEmail(u.email)
+    const serialized = serializeAdminUser(u, {
+      usageToday: usageToday.get(email) ?? 0,
+      grants: allGrants.get(email) ?? [],
+    })
     return serialized.uploadsRemainingToday !== null &&
       serialized.uploadsRemainingToday <= 2
       ? [serialized]
@@ -394,7 +345,7 @@ export async function collectOverview(options: OverviewOptions) {
         {
           email,
           name: user?.name || deriveNameFromEmail(email),
-          isAdmin: Boolean(user?.isAdmin),
+          isAdmin: isAdminUser(user),
           ...s,
         },
       ]
@@ -409,26 +360,30 @@ export async function collectOverview(options: OverviewOptions) {
     generatedAt: new Date().toISOString(),
     days,
     includeAdmins: options.includeAdmins,
-    includeSynced: options.includeSynced,
+    includeSynced: true,
     totals: {
       users: users.length,
-      activeUsers: users.filter((u) => u.isActive !== false).length,
-      admins: users.filter((u) => u.isAdmin).length,
-      unlimitedUsers: users.filter((u) => u.hasUnlimitedUploads).length,
+      activeUsers: users.length,
+      admins: adminEmails.size,
+      onboardedUsers: users.filter((u) => u.isOnboarded === true).length,
+      uploadEnabledUsers: users.filter(
+        (u) => isAdminUser(u) || u.isAllowedToUpload === true
+      ).length,
       usersNearQuota: nearQuota.length,
       uploadsToday,
       sessionsToday,
       docsToday: docsTodayCount,
-      thinkingSessionsInRange: thinkingSessions,
       corpus: {
         documents: corpusDocs,
-        indexed: corpusIndexed,
-        indexedBase,
-        indexedPct: indexedBase > 0 ? Math.round((corpusIndexed / indexedBase) * 100) : 0,
-        syncedDocuments: census.synced,
-        manualDocuments: census.totalActive - census.synced,
-        totalPages:
-          census.manualPages + (options.includeSynced ? census.syncedPages : 0),
+        indexed: census.indexed,
+        indexedBase: census.total,
+        indexedPct:
+          census.total > 0
+            ? Math.round((census.indexed / census.total) * 100)
+            : 0,
+        syncedDocuments: 0,
+        manualDocuments: census.total,
+        totalPages: 0,
       },
     },
     trends: keys.map((key) => trends.get(key)!),
@@ -452,31 +407,31 @@ export async function listAllSessions(limit = 200): Promise<
     runStatus: string
   }[]
 > {
-  const rows = await searchObjects<SessionLite>("OrbitDocsUserSessions", {
+  const rows = await searchObjects<SessionLite>("OrbitDocsChatSessions", {
     select: [
-      "primaryKey_",
+      "sessionId",
       "title",
-      "user",
-      "mode",
+      "userEmail",
       "createdAt",
-      "updatedAt",
+      "lastUpdatedAt",
       "isDeleted",
-      "currentRunStatus",
+      "options",
     ],
-    orderBy: { fields: [{ field: "updatedAt", direction: "desc" }] },
+    orderBy: { fields: [{ field: "lastUpdatedAt", direction: "desc" }] },
     pageSize: Math.min(limit * 2, 1000),
     maxItems: limit * 2,
   })
   return rows
-    .filter((row) => !row.isDeleted)
+    .filter((row) => row.isDeleted !== true)
     .slice(0, limit)
     .map((row) => ({
-      rid: String(row.primaryKey_ ?? row.__primaryKey ?? ""),
+      rid: String(row.sessionId ?? row.__primaryKey ?? ""),
       title: row.title || "Untitled",
-      user: normalizeEmail(row.user),
-      mode: row.mode === "thinking" ? "thinking" : "regular",
+      user: normalizeEmail(row.userEmail),
+      mode: "regular",
       createdAt: row.createdAt ?? null,
-      updatedAt: row.updatedAt ?? null,
-      runStatus: row.currentRunStatus || "idle",
+      updatedAt: row.lastUpdatedAt ?? null,
+      runStatus:
+        sessionOptions(row as SessionRow).currentRun?.status ?? "idle",
     }))
 }

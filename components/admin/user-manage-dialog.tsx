@@ -14,10 +14,17 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { adminApi, type AdminUser } from "@/lib/live-api"
 
-/** Per-user flags + rate-limit controls (PoC admin user editor). */
+/** Per-user role + upload controls, plus a bonus-upload grant form (v3). */
 export function UserManageDialog({
   user,
   onOpenChange,
@@ -27,20 +34,29 @@ export function UserManageDialog({
   onOpenChange: (open: boolean) => void
   onSaved: (updated: AdminUser) => void
 }) {
-  const [isActive, setIsActive] = React.useState(true)
-  const [isAdmin, setIsAdmin] = React.useState(false)
-  const [unlimited, setUnlimited] = React.useState(false)
+  const [role, setRole] = React.useState("user")
+  const [isOnboarded, setIsOnboarded] = React.useState(false)
+  const [isAllowedToUpload, setIsAllowedToUpload] = React.useState(false)
   const [dailyLimit, setDailyLimit] = React.useState(10)
-  const [bonus, setBonus] = React.useState(0)
   const [saving, setSaving] = React.useState(false)
+
+  /* grant-bonus form */
+  const [bonusAmount, setBonusAmount] = React.useState(10)
+  const [validUntil, setValidUntil] = React.useState("")
+  const [grantReason, setGrantReason] = React.useState("")
+  const [granting, setGranting] = React.useState(false)
 
   React.useEffect(() => {
     if (user) {
-      setIsActive(user.isActive)
-      setIsAdmin(user.isAdmin)
-      setUnlimited(user.hasUnlimitedUploads)
+      setRole(user.role || (user.isAdmin ? "admin" : "user"))
+      setIsOnboarded(user.isOnboarded)
+      setIsAllowedToUpload(user.isAllowedToUpload)
       setDailyLimit(user.dailyUploadLimit)
-      setBonus(user.bonusUploadLimit)
+      // default the grant window to 30 days out
+      const until = new Date(Date.now() + 30 * 24 * 3600 * 1000)
+      setValidUntil(until.toISOString().slice(0, 10))
+      setBonusAmount(10)
+      setGrantReason("")
     }
   }, [user])
 
@@ -50,11 +66,10 @@ export function UserManageDialog({
     setSaving(true)
     try {
       const result = await adminApi.updateUser(user.primaryKey, {
-        isActive,
-        isAdmin,
-        hasUnlimitedUploads: unlimited,
+        role,
+        isOnboarded,
+        isAllowedToUpload,
         dailyUploadLimit: Math.max(0, Math.round(dailyLimit)),
-        bonusUploadLimit: Math.max(0, Math.round(bonus)),
       })
       if (result.data) onSaved(result.data)
       toast("User updated", { description: user.email })
@@ -65,6 +80,33 @@ export function UserManageDialog({
       })
     } finally {
       setSaving(false)
+    }
+  }
+
+  const grant = async () => {
+    const amount = Math.max(1, Math.round(bonusAmount))
+    if (!validUntil) {
+      toast.error("Pick a valid-until date for the grant")
+      return
+    }
+    setGranting(true)
+    try {
+      await adminApi.createGrant({
+        userEmail: user.email,
+        bonusUploads: amount,
+        validUntil: new Date(`${validUntil}T23:59:59Z`).toISOString(),
+        reason: grantReason.trim() || undefined,
+      })
+      toast.success("Bonus uploads granted", {
+        description: `${amount} extra uploads for ${user.email} until ${validUntil}`,
+      })
+      setGrantReason("")
+    } catch (error) {
+      toast.error("Couldn't grant bonus uploads", {
+        description: error instanceof Error ? error.message : undefined,
+      })
+    } finally {
+      setGranting(false)
     }
   }
 
@@ -79,68 +121,108 @@ export function UserManageDialog({
           <div className="space-y-3 rounded-lg border p-3">
             <Label className="flex items-center justify-between text-sm font-normal">
               <span>
-                Active
+                Role
                 <span className="text-muted-foreground block text-xs">
-                  Inactive users are rejected at sign-in
+                  Admins get full console access and bypass upload limits
                 </span>
               </span>
-              <Switch checked={isActive} onCheckedChange={setIsActive} />
+              <Select value={role} onValueChange={setRole}>
+                <SelectTrigger size="sm" className="w-32">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="user">Member</SelectItem>
+                  <SelectItem value="admin">Admin</SelectItem>
+                </SelectContent>
+              </Select>
             </Label>
             <Label className="flex items-center justify-between text-sm font-normal">
               <span>
-                Admin
+                Onboarded
                 <span className="text-muted-foreground block text-xs">
-                  Full access to this console; exempt from limits
+                  Whether the user has completed first-run onboarding
                 </span>
               </span>
-              <Switch checked={isAdmin} onCheckedChange={setIsAdmin} />
+              <Switch checked={isOnboarded} onCheckedChange={setIsOnboarded} />
             </Label>
           </div>
           <div className="space-y-3 rounded-lg border p-3">
             <Label className="flex items-center justify-between text-sm font-normal">
               <span>
-                Unlimited uploads
+                Allowed to upload
                 <span className="text-muted-foreground block text-xs">
-                  Bypass the daily upload quota entirely
+                  Users must be enabled before they can add documents
                 </span>
               </span>
-              <Switch checked={unlimited} onCheckedChange={setUnlimited} />
+              <Switch
+                checked={isAllowedToUpload}
+                onCheckedChange={setIsAllowedToUpload}
+              />
             </Label>
-            {!unlimited && !isAdmin && (
-              <div className="grid grid-cols-2 gap-3">
-                <Label className="space-y-1.5 text-sm font-normal">
-                  <span>Daily upload limit</span>
-                  <Input
-                    type="number"
-                    min={0}
-                    value={dailyLimit}
-                    onChange={(e) => setDailyLimit(Number(e.target.value))}
-                  />
-                </Label>
-                <Label className="space-y-1.5 text-sm font-normal">
-                  <span>Bonus uploads</span>
-                  <Input
-                    type="number"
-                    min={0}
-                    value={bonus}
-                    onChange={(e) => setBonus(Number(e.target.value))}
-                  />
-                </Label>
-              </div>
+            {isAllowedToUpload && role !== "admin" && (
+              <Label className="space-y-1.5 text-sm font-normal">
+                <span>Daily upload limit</span>
+                <Input
+                  type="number"
+                  min={0}
+                  value={dailyLimit}
+                  onChange={(e) => setDailyLimit(Number(e.target.value))}
+                />
+                <span className="text-muted-foreground block text-xs">
+                  {user.uploadsUsedToday} used today
+                  {user.activeBonusUploads > 0 &&
+                    ` · +${user.activeBonusUploads} active bonus`}
+                </span>
+              </Label>
             )}
-            {!unlimited && !isAdmin && (
-              <p className="text-muted-foreground text-xs">
-                Effective limit today: {Math.max(0, Math.round(dailyLimit)) + Math.max(0, Math.round(bonus))} uploads
-                · {user.uploadsUsedToday} already used
-              </p>
-            )}
+          </div>
+
+          {/* Grant bonus uploads */}
+          <div className="space-y-3 rounded-lg border p-3">
+            <p className="text-sm font-medium">Grant bonus uploads</p>
+            <div className="grid grid-cols-2 gap-3">
+              <Label className="space-y-1.5 text-sm font-normal">
+                <span>Amount</span>
+                <Input
+                  type="number"
+                  min={1}
+                  value={bonusAmount}
+                  onChange={(e) => setBonusAmount(Number(e.target.value))}
+                />
+              </Label>
+              <Label className="space-y-1.5 text-sm font-normal">
+                <span>Valid until</span>
+                <Input
+                  type="date"
+                  value={validUntil}
+                  onChange={(e) => setValidUntil(e.target.value)}
+                />
+              </Label>
+            </div>
+            <Label className="space-y-1.5 text-sm font-normal">
+              <span>Reason (optional)</span>
+              <Input
+                value={grantReason}
+                onChange={(e) => setGrantReason(e.target.value)}
+                placeholder="e.g. one-off migration batch"
+              />
+            </Label>
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full"
+              disabled={granting}
+              onClick={() => void grant()}
+            >
+              {granting ? "Granting…" : "Grant bonus uploads"}
+            </Button>
           </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
             Cancel
           </Button>
-          <Button onClick={save} disabled={saving}>
+          <Button onClick={() => void save()} disabled={saving}>
             {saving ? "Saving…" : "Save changes"}
           </Button>
         </DialogFooter>

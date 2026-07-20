@@ -112,11 +112,11 @@ export interface Artifact {
   sessionId?: string
   /** live mode: skill pack that produced it */
   docSkillId?: string
-  /** live mode: parsed document content (demo artifacts have none) */
+  /** live mode: parsed document content (unset until generation completes) */
   model?: DocModel
   /** live mode: accepted edit rounds, oldest first */
   versions?: DocVersionEntry[]
-  /** live mode: derived from a real transcript (vs demo seed) */
+  /** live mode: derived from a real transcript */
   live?: boolean
 }
 
@@ -143,17 +143,8 @@ export interface ChatMessage {
   scopeLabel?: string
   /** marks the message as an edited variant (branch) */
   editedFrom?: string
-  /** live mode: server-reported alternate branch count at this message */
-  alternateBranchCount?: number | null
   /** live mode: stream error surfaced inline */
   errorType?: "context_exceeded" | "error"
-}
-
-export interface SessionBranchMeta {
-  id: string
-  name: string
-  isDefault: boolean
-  anchorMessageId: string | null
 }
 
 export interface ChatSession {
@@ -172,12 +163,10 @@ export interface ChatSession {
   /** live mode: whether the transcript has been fetched */
   contentLoaded?: boolean
   foldersAttached?: string[]
-  branches?: SessionBranchMeta[]
-  activeBranchId?: string | null
   runStatus?: string
   /** live mode: chat folder this session is filed in */
   chatFolderId?: string | null
-  /** live mode: "regular" | "thinking" — the agent used for new turns */
+  /** live mode: always "regular" in v3 (thinking mode removed) */
   mode?: string
 }
 

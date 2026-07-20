@@ -34,11 +34,7 @@ export async function DELETE(
     const { id } = await params
     const session = await getSessionRow(id, await resolveRequestUser(request))
     if (!session) return json({ error: "Session not found" }, { status: 404 })
-    await updateSessionRow(id, {
-      isDeleted: true,
-      deletedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    })
+    await updateSessionRow(session, { isDeleted: true })
     return json({ success: true, deletedSessionId: id })
   } catch (error) {
     return errorResponse(error)

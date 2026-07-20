@@ -39,9 +39,8 @@ export async function POST(request: Request) {
       return json({ error: "userInput is required" }, { status: 422 })
     }
 
-    const engine =
-      body.engine ??
-      (process.env.REFINE_ENGINE === "llm-proxy" ? "llm-proxy" : "query")
+    const cfg = getFoundryConfig()
+    const engine = body.engine ?? cfg.refineEngine
     if (engine === "llm-proxy") {
       const text = await refineViaProxy({ ...body, userInput: body.userInput })
       return json({ text, engine: "llm-proxy" })
@@ -52,7 +51,6 @@ export async function POST(request: Request) {
     if (body.toRefine) parameters.toRefine = body.toRefine
     if (body.refineRequest) parameters.refineRequest = body.refineRequest
 
-    const cfg = getFoundryConfig()
     const result = await executeQuery<unknown>(cfg.refineQueryApiName, parameters)
     return json({ text: extractRefineText(result), raw: result, engine: "query" })
   } catch (error) {

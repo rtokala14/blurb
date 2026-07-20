@@ -7,7 +7,6 @@ import {
   Eye,
   Folder,
   PanelRightClose,
-  RefreshCw,
   Search,
   Sparkles,
   Upload,
@@ -35,9 +34,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
-import { TimeAgo } from "@/components/time-ago"
 import { useOrbit } from "@/lib/store"
-import { useSharePointSync } from "@/lib/use-sharepoint-sync"
 import type { ChatSession, Doc, DocFolder } from "@/lib/types"
 
 /** Every selectable doc inside a folder or any of its descendants. */
@@ -263,10 +260,7 @@ export function DocumentsPanel({
 }) {
   const docs = useOrbit((s) => s.docs)
   const folders = useOrbit((s) => s.folders)
-  const sites = useOrbit((s) => s.sites)
-  const live = useOrbit((s) => s.live === true)
   const setSessionScope = useOrbit((s) => s.setSessionScope)
-  const syncSite = useSharePointSync()
 
   const [tab, setTab] = React.useState<"library" | "synced">("library")
   const [query, setQuery] = React.useState("")
@@ -307,9 +301,6 @@ export function DocumentsPanel({
 
   const libraryRoots = folders.filter(
     (f) => f.parentId === null && f.source !== "sharepoint"
-  )
-  const syncedRoots = folders.filter(
-    (f) => f.parentId === null && f.source === "sharepoint"
   )
 
   return (
@@ -436,9 +427,9 @@ export function DocumentsPanel({
                 </>
               )}
             </>
-          ) : live ? (
-            /* Live mode: PoC-style explorer over the real sync-item tree —
-               deep folder navigation, in-source search, folder tri-state. */
+          ) : (
+            /* PoC-style explorer over the real sync-item tree — deep folder
+               navigation, in-source search, folder tri-state. */
             <SyncSourcesTab
               selected={selected}
               onToggleDocs={(add, remove) => {
@@ -449,68 +440,6 @@ export function DocumentsPanel({
               }}
               onPreviewDoc={setPreviewDoc}
             />
-          ) : (
-            <>
-              {sites.map((site) => {
-                const folder = folders.find((f) => f.id === site.mappedFolderId)
-                return (
-                  <div key={site.id} className="mb-2">
-                    <div className="bg-muted/50 mb-1 flex items-center gap-2 rounded-md border px-2 py-1.5">
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-xs font-medium">{site.name}</p>
-                        <p className="text-muted-foreground text-[10px]">
-                          {site.state === "syncing"
-                            ? "Syncing…"
-                            : <>Synced <TimeAgo iso={site.lastSyncedAt} /></>}
-                          {site.attentionCount > 0 &&
-                            ` · ${site.attentionCount} conflicts`}
-                        </p>
-                      </div>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            className="size-6"
-                            aria-label={`Sync ${site.name}`}
-                            disabled={site.state === "syncing"}
-                            onClick={() => syncSite(site.id)}
-                          >
-                            {site.state === "syncing" ? (
-                              <Spinner className="size-3" />
-                            ) : (
-                              <RefreshCw className="size-3" />
-                            )}
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent side="left">Sync now</TooltipContent>
-                      </Tooltip>
-                    </div>
-                    {folder && (
-                      <FolderNode
-                        folder={folder}
-                        depth={0}
-                        folders={folders}
-                        docs={docs}
-                        selected={selected}
-                        matches={matches}
-                        descendantDocIds={descendantDocIds}
-                        onSelectedChange={setSelected}
-                        onToggleDoc={toggleDoc}
-                        onPreview={setPreviewDoc}
-                        query={query}
-                      />
-                    )}
-                  </div>
-                )
-              })}
-              {syncedRoots.length === 0 && (
-                <p className="text-muted-foreground p-3 text-xs">
-                  No synced folders yet — connect a SharePoint site from
-                  Connections.
-                </p>
-              )}
-            </>
           )}
         </div>
       </div>

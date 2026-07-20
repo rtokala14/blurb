@@ -47,7 +47,8 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
-  --font-sans: var(--font-geist-sans);
+  --font-sans: var(--font-chronos), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-chronos-display), var(--font-chronos), sans-serif;
   --font-mono: var(--font-geist-mono);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
@@ -223,4 +224,134 @@
 .thin-scrollbar {
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
+}
+/* ------------------------------------------------------------------ */
+/* Orbit mark — planet + orbit line + sparkle satellite                */
+/*                                                                     */
+/* The static glyph is one frozen frame of the orbit. When animating,  */
+/* it is swapped for a live rig: the sparkle cluster (satellite) rides */
+/* the orbit line across the planet's face while the trail draws       */
+/* behind it, slips behind the planet at the right edge, then re-      */
+/* enters from the top-left tail. One shared cycle keeps the trail's   */
+/* tip glued to the satellite (both animate linearly over the same     */
+/* 0–78% travel window; 78–96% is the retreat behind the planet).      */
+/* ------------------------------------------------------------------ */
+.orbit-mark {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.orbit-mark[data-animated] .orbit-static {
+  display: none;
+}
+.orbit-mark .orbit-planet,
+.orbit-mark .orbit-trail {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 7;
+}
+.orbit-mark .orbit-trail {
+  stroke-linecap: round;
+  /* Long gap value so dashoffset can exceed 100 without wrapping. */
+  stroke-dasharray: 100 200;
+  stroke-dashoffset: 108;
+}
+/* The offset-path itself is set inline by the component (ORBIT_PATH_D),
+   so the trail stroke and the satellite's route can never drift apart. */
+.orbit-mark .orbit-satellite {
+  offset-rotate: 0deg;
+}
+.orbit-mark[data-animated] .orbit-trail {
+  animation: orbit-trail 5.2s linear infinite;
+}
+.orbit-mark[data-animated] .orbit-satellite {
+  animation: orbit-travel 5.2s linear infinite;
+}
+/* Perspective: the front of the orbit is nearest at mid-crossing, so the
+   satellite grows toward the centre and shrinks toward the edges. */
+.orbit-mark[data-animated] .orbit-satellite-scale {
+  animation: orbit-approach 5.2s ease-in-out infinite;
+}
+.orbit-mark[data-animated] .orbit-star {
+  animation: orbit-twinkle 2.2s ease-in-out infinite;
+}
+/* Streaming: same choreography at ~2x tempo. */
+.orbit-mark[data-animated="stream"] .orbit-trail,
+.orbit-mark[data-animated="stream"] .orbit-satellite,
+.orbit-mark[data-animated="stream"] .orbit-satellite-scale {
+  animation-duration: 2.6s;
+}
+.orbit-mark[data-animated="stream"] .orbit-star {
+  animation-duration: 1.2s;
+}
+
+/* Satellite: travel the line (0–78%), vanish behind the planet, loop.
+   The bezier on the 0% keyframe ramps the crossing — slow in from the
+   far end, fastest mid-face (closest approach), slowing into the exit.
+   It must stay identical to the one in orbit-trail so the trail tip
+   keeps a constant distance behind the star. */
+@keyframes orbit-travel {
+  0% {
+    offset-distance: 0%;
+    opacity: 0;
+    animation-timing-function: cubic-bezier(0.55, 0, 0.45, 1);
+  }
+  5% {
+    opacity: 1;
+  }
+  78% {
+    offset-distance: 100%;
+    opacity: 1;
+  }
+  86%,
+  100% {
+    offset-distance: 100%;
+    opacity: 0;
+  }
+}
+/* Trail: draw to the satellite (0–78%), then the tail catches up and
+   follows it behind the planet (78–96%). pathLength=100 on the path
+   makes the dash arithmetic percentage-based. */
+@keyframes orbit-trail {
+  0% {
+    stroke-dashoffset: 108;
+    animation-timing-function: cubic-bezier(0.55, 0, 0.45, 1);
+  }
+  78% {
+    stroke-dashoffset: 8;
+  }
+  96%,
+  100% {
+    stroke-dashoffset: -100;
+  }
+}
+@keyframes orbit-approach {
+  0% {
+    transform: scale(0.7);
+  }
+  39% {
+    transform: scale(1);
+  }
+  78%,
+  100% {
+    transform: scale(0.7);
+  }
+}
+@keyframes orbit-twinkle {
+  0%,
+  100% {
+    opacity: 0.7;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+/* Reduced motion: show the static glyph instead of the moving rig. */
+@media (prefers-reduced-motion: reduce) {
+  .orbit-mark[data-animated] .orbit-static {
+    display: block;
+  }
+  .orbit-mark .orbit-anim {
+    display: none;
+  }
 }

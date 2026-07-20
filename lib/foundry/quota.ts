@@ -1,14 +1,25 @@
 import "server-only"
 
-import { applyAction, searchObjects } from "./client"
-import { normalizeEmail } from "./ontology"
-import { UserResolutionError, type OrbitUserRow } from "./user"
+import { countObjects } from "./client"
+import {
+  activeBonusUploads,
+  emailWhere,
+  listGrantsForUser,
+  normalizeEmail,
+} from "./ontology"
+import {
+  isAdminUser,
+  UserResolutionError,
+  userDailyLimit,
+  type OrbitUserRow,
+} from "./user"
 
 /**
- * Daily upload quota — port of the PoC's services/upload_quota.py.
- * Usage lives in OrbitDocsUserDailyUploadUsage rows keyed by (email, date);
- * the effective limit is daily + unexpired bonus, with admins and
- * has_unlimited_uploads users exempt.
+ * v3 daily upload quota. There is no usage object anymore:
+ *   effective = user.dailyUploadLimit + Σ active RateLimitGrant.bonusUploads
+ *   usedToday = count(OrbitDocsDocMeta where userEmail == me AND uploadTs ≥ UTC midnight)
+ *   allow iff user.isAllowedToUpload && usedToday + requested ≤ effective
+ * Admins are exempt.
  */
 
 export class UploadQuotaExceeded extends UserResolutionError {
@@ -30,44 +41,44 @@ export class UploadQuotaExceeded extends UserResolutionError {
   }
 }
 
-interface UsageRow {
-  __primaryKey: string
-  primaryKey_?: string
-  email?: string
-  usageDate?: string
-  uploadsUsed?: number
+export class UploadNotAllowed extends UserResolutionError {
+  constructor() {
+    super(
+      "Uploads are not enabled for your account yet. Ask an admin to enable uploading.",
+      403
+    )
+    this.name = "UploadNotAllowed"
+  }
 }
 
-export function todayUtc(): string {
-  return new Date().toISOString().slice(0, 10)
+export function startOfTodayUtc(): string {
+  const now = new Date()
+  return new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
+  ).toISOString()
 }
 
-/** null = unlimited (admin or has_unlimited_uploads). */
-export function effectiveDailyLimit(user: OrbitUserRow): number | null {
-  if (user.isAdmin || user.hasUnlimitedUploads) return null
-  const daily = Number(user.dailyUploadLimit ?? 0) || 0
-  const bonus = Number(user.bonusUploadLimit ?? 0) || 0
-  const expires = user.bonusExpiresAt ? Date.parse(user.bonusExpiresAt) : NaN
-  const bonusActive = !user.bonusExpiresAt || !(expires < Date.now())
-  return bonusActive ? daily + bonus : daily
+/** Effective daily limit (base + active grants). null = unlimited (admin). */
+export async function effectiveDailyLimit(
+  user: OrbitUserRow
+): Promise<number | null> {
+  if (isAdminUser(user)) return null
+  const grants = await listGrantsForUser(normalizeEmail(user.email))
+  return userDailyLimit(user) + activeBonusUploads(grants)
 }
 
-export async function getUsageToday(email: string): Promise<UsageRow | null> {
-  const rows = await searchObjects<UsageRow>("OrbitDocsUserDailyUploadUsage", {
+/** Documents this user registered since UTC midnight. */
+export async function getUploadsUsedToday(email: string): Promise<number> {
+  const counts = await countObjects("OrbitDocsDocMeta", {
     where: {
       type: "and",
       value: [
-        // case-insensitive (term match); verified in JS below
-        { type: "containsAllTerms", field: "email", value: normalizeEmail(email) },
-        { type: "eq", field: "usageDate", value: todayUtc() },
+        emailWhere("userEmail", email),
+        { type: "gte", field: "uploadTs", value: startOfTodayUtc() },
       ],
     },
-    pageSize: 10,
   })
-  return (
-    rows.find((row) => normalizeEmail(row.email) === normalizeEmail(email)) ??
-    null
-  )
+  return counts.get("") ?? 0
 }
 
 /** In-flight reservations so concurrent uploads can't blow past the limit. */
@@ -78,11 +89,13 @@ export async function reserveUploadCapacity(
   requested: number,
   reservationId: string
 ): Promise<void> {
-  const limit = effectiveDailyLimit(user)
+  if (!isAdminUser(user) && user.isAllowedToUpload !== true) {
+    throw new UploadNotAllowed()
+  }
+  const limit = await effectiveDailyLimit(user)
   if (limit === null) return
   const email = normalizeEmail(user.email)
-  const usage = await getUsageToday(email)
-  const usedToday = Number(usage?.uploadsUsed ?? 0) || 0
+  const usedToday = await getUploadsUsedToday(email)
   const reserved = [...inFlight.entries()]
     .filter(([id, r]) => r.email === email && id !== reservationId)
     .reduce((sum, [, r]) => sum + r.count, 0)
@@ -101,33 +114,10 @@ export function releaseUploadCapacity(reservationId: string): void {
   inFlight.delete(reservationId)
 }
 
-/** Record completed uploads in today's usage row (create or edit). */
-export async function commitUploadUsage(
-  email: string,
-  uploaded: number,
-  reservationId: string
-): Promise<void> {
+/**
+ * Usage is derived from DocMeta rows, so committing is just dropping the
+ * reservation — the registry rows written during upload ARE the usage record.
+ */
+export function commitUploadUsage(reservationId: string): void {
   inFlight.delete(reservationId)
-  if (uploaded <= 0) return
-  const normalized = normalizeEmail(email)
-  const timestamp = new Date().toISOString()
-  const usage = await getUsageToday(normalized)
-  if (usage) {
-    await applyAction("edit-orbit-docs-user-daily-upload-usage", {
-      OrbitDocsUserDailyUploadUsage: String(usage.primaryKey_ ?? usage.__primaryKey),
-      email: normalized,
-      usageDate: usage.usageDate ?? todayUtc(),
-      uploadsUsed: (Number(usage.uploadsUsed ?? 0) || 0) + uploaded,
-      lastUploadAt: timestamp,
-      updatedAt: timestamp,
-    })
-  } else {
-    await applyAction("create-orbit-docs-user-daily-upload-usage", {
-      email: normalized,
-      usageDate: todayUtc(),
-      uploadsUsed: uploaded,
-      lastUploadAt: timestamp,
-      updatedAt: timestamp,
-    })
-  }
 }

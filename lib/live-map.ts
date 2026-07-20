@@ -2,7 +2,6 @@
 
 import { parseLiveMessage } from "@/lib/live-citations"
 import type {
-  LiveBranch,
   LiveDocument,
   LiveFolder,
   LiveMessageRow,
@@ -17,7 +16,6 @@ import type {
   Doc,
   DocFolder,
   DocType,
-  SessionBranchMeta,
   SharePointSite,
 } from "@/lib/types"
 
@@ -33,21 +31,21 @@ export function docTypeFromName(name: string): DocType {
 
 export const SYNC_FOLDER_PREFIX = "sync:"
 
+/**
+ * v3 documents carry their real folder membership on `folderId` (null = root).
+ * The optional `folderByDocId` map is kept for the legacy caller signature but
+ * only used as a fallback when the server didn't resolve a folder.
+ */
 export function mapLiveDoc(
   doc: LiveDocument,
-  folderByDocId: Map<string, string>
+  folderByDocId?: Map<string, string>
 ): Doc {
-  const synced = (doc.sourceType ?? "").trim().length > 0
   return {
     id: doc.primaryKey,
     name: doc.documentName,
     type: docTypeFromName(doc.documentName),
-    folderId: synced
-      ? doc.sourceSyncConfigPk
-        ? `${SYNC_FOLDER_PREFIX}${doc.sourceSyncConfigPk}`
-        : null
-      : (folderByDocId.get(doc.primaryKey) ?? null),
-    source: synced ? "sharepoint" : "upload",
+    folderId: doc.folderId ?? folderByDocId?.get(doc.primaryKey) ?? null,
+    source: "upload",
     status: doc.isIndexed ? "ready" : "processing",
     sizeKB: 0,
     pages: doc.noPages ?? 0,
@@ -55,32 +53,34 @@ export function mapLiveDoc(
     updatedAt: doc.createdAt ?? new Date().toISOString(),
     tags: doc.sharedFolderNames.slice(0, 3),
     summary: doc.isIndexed
-      ? `Indexed on Foundry${doc.noPages ? ` · ${doc.noPages} pages` : ""}. Ask about this document in Chat for grounded answers with citations.`
-      : "Uploaded — Foundry is extracting and indexing this document.",
+      ? `Indexed${doc.noPages ? ` · ${doc.noPages} pages` : ""}. Ask about this document in Chat for grounded answers with citations.`
+      : "Uploaded — extracting and indexing this document.",
     version: 1,
     mediaRid: doc.mediaItemRid,
   }
 }
 
+/**
+ * v3 folders form a real nested tree via `parentId`. Colors are a client-side
+ * preference (the server always sends null) so we carry whatever the payload
+ * gives us and let local edits override it.
+ */
 export function mapLiveFolders(folders: LiveFolder[]): {
   folders: DocFolder[]
   folderByDocId: Map<string, string>
 } {
-  const folderByDocId = new Map<string, string>()
-  const mapped = folders.map((folder) => {
-    for (const docId of folder.contents) {
-      if (!folderByDocId.has(docId)) folderByDocId.set(docId, folder.primaryKey)
-    }
-    return {
-      id: folder.primaryKey,
-      name: folder.name,
-      parentId: null,
-      source: "upload" as const,
-      createdBy: folder.createdBy,
-      accessEmails: folder.accessEmails,
-    }
-  })
-  return { folders: mapped, folderByDocId }
+  const mapped = folders.map((folder) => ({
+    id: folder.primaryKey,
+    name: folder.name,
+    parentId: folder.parentId ?? null,
+    source: "upload" as const,
+    color: folder.color,
+    createdBy: folder.createdBy,
+    accessEmails: folder.accessEmails,
+  }))
+  // v3 resolves folder membership server-side on each doc, so there is no
+  // per-folder contents list to invert here.
+  return { folders: mapped, folderByDocId: new Map<string, string>() }
 }
 
 export function mapSyncSources(sources: LiveSyncSource[]): {
@@ -116,13 +116,14 @@ export function mapLiveSession(session: LiveSession): ChatSession {
     title: session.metadata.title,
     createdAt: session.metadata.createdTime ?? new Date().toISOString(),
     updatedAt: session.metadata.updatedTime ?? new Date().toISOString(),
+    // messages aren't loaded until the transcript is fetched — the leaf is
+    // derived from activeLeafMessageId then.
     leafId: null,
     messages: {},
     scopeDocIds: session.docsAttached,
     live: true,
     contentLoaded: false,
     foldersAttached: session.foldersAttached,
-    activeBranchId: session.activeBranchId,
     runStatus: session.currentRun.status,
     chatFolderId: session.chatFolderId,
     mode: session.mode,
@@ -143,15 +144,6 @@ export function mapLiveChatFolder(folder: {
   }
 }
 
-export function mapLiveBranch(branch: LiveBranch): SessionBranchMeta {
-  return {
-    id: branch.id,
-    name: branch.name,
-    isDefault: branch.isDefault,
-    anchorMessageId: branch.anchorMessageId,
-  }
-}
-
 /** Convert a persisted transcript row into a store message (citations parsed). */
 export function mapLiveMessage(row: LiveMessageRow): ChatMessage {
   const base: ChatMessage = {
@@ -161,7 +153,6 @@ export function mapLiveMessage(row: LiveMessageRow): ChatMessage {
     content: row.content,
     createdAt: row.createdAt ?? new Date().toISOString(),
     phase: "done",
-    alternateBranchCount: row.alternateBranchCount,
   }
   if (row.role === "assistant") {
     const parsed = parseLiveMessage(row.content)
@@ -191,21 +182,31 @@ export function liveCitationToUi(citation: {
 }
 
 /**
- * Build the messages record + leaf from a linearized transcript. Parent links
- * come from the server; the last row is the active leaf.
+ * Build the full message tree from the transcript. v3 returns every message in
+ * the session (not a single linearized branch); parent links come from
+ * `parentMessageId`, and the active leaf is the session cursor. Sibling groups
+ * (same parentId) power the version switcher; the visible path is derived by
+ * walking up from the leaf (see `activePath` in the store).
  */
-export function transcriptToTree(rows: LiveMessageRow[]): {
+export function transcriptToTree(
+  rows: LiveMessageRow[],
+  activeLeafMessageId: string | null | undefined
+): {
   messages: Record<string, ChatMessage>
   leafId: string | null
 } {
   const messages: Record<string, ChatMessage> = {}
-  let previous: string | null = null
+  let lastId: string | null = null
   for (const row of rows) {
     const message = mapLiveMessage(row)
-    // Ensure lineage even if legacy rows lack parent ids.
-    if (message.parentId === null && previous) message.parentId = previous
     messages[message.id] = message
-    previous = message.id
+    lastId = message.id
   }
-  return { messages, leafId: previous }
+  // Prefer the server cursor; fall back to the last row for legacy sessions
+  // that predate activeLeafMessageId being populated.
+  const leafId =
+    activeLeafMessageId && messages[activeLeafMessageId]
+      ? activeLeafMessageId
+      : lastId
+  return { messages, leafId }
 }

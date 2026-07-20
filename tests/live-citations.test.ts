@@ -96,3 +96,90 @@ describe("stripSourceTags", () => {
     expect(stripSourceTags(raw)).toBe("Fact here.")
   })
 })
+
+/* ------------------------------------------------------------------ */
+/* Bracket-JSON citation format (current agent emission style)          */
+/* ------------------------------------------------------------------ */
+
+const bracketCite = (payload: Record<string, unknown>) =>
+  `【${JSON.stringify(payload)}】`
+
+describe("parseLiveMessage — bracket citations", () => {
+  test("converts a bracket citation to a numbered marker", () => {
+    const raw =
+      "The system uses Q-Learning." +
+      bracketCite({
+        type: "citation",
+        doc: "AIML1.pdf",
+        name: "AIML1.pdf",
+        page: 23,
+        quote: "we have chosen the Q-Learning algorithm",
+      })
+    const parsed = parseLiveMessage(raw)
+    expect(parsed.content).toBe("The system uses Q-Learning.⟦1⟧")
+    expect(parsed.citations).toHaveLength(1)
+    expect(parsed.citations[0]).toMatchObject({
+      n: 1,
+      mediaRid: "",
+      docName: "AIML1.pdf",
+      pages: "23",
+      firstPage: 23,
+      quote: "we have chosen the Q-Learning algorithm",
+    })
+  })
+
+  test("dedupes identical doc+page pairs and numbers across both formats", () => {
+    const raw =
+      'a <source id="ri.mio.main.media-item.x" name="MSA.pdf">4</source> b ' +
+      bracketCite({ type: "citation", doc: "AIML1.pdf", page: 3 }) +
+      " c " +
+      bracketCite({ type: "citation", doc: "AIML1.pdf", page: 3 })
+    const parsed = parseLiveMessage(raw)
+    expect(parsed.citations).toHaveLength(2)
+    expect(parsed.content).toBe("a ⟦1⟧ b ⟦2⟧ c ⟦2⟧")
+  })
+
+  test("falls back to doc field when name is missing", () => {
+    const parsed = parseLiveMessage(
+      bracketCite({ type: "citation", doc: "SustainIQ User Manual.pdf", page: 7 })
+    )
+    expect(parsed.citations[0].docName).toBe("SustainIQ User Manual.pdf")
+  })
+
+  test("leaves non-citation JSON and plain CJK brackets untouched", () => {
+    const nonCitation = `【{"type":"note","doc":"x"}】`
+    const prose = "【重要】 remember this"
+    expect(parseLiveMessage(nonCitation).content).toBe(nonCitation)
+    expect(parseLiveMessage(nonCitation).citations).toHaveLength(0)
+    expect(parseLiveMessage(prose).content).toBe(prose)
+  })
+})
+
+describe("parseStreamingLiveText — bracket citations", () => {
+  test("hides a trailing incomplete bracket citation mid-stream", () => {
+    const partial = 'The answer 【{"type":"citation","doc":"A.pdf","pa'
+    const parsed = parseStreamingLiveText(partial)
+    expect(parsed.content).toBe("The answer")
+    expect(parsed.citations).toHaveLength(0)
+  })
+
+  test("renders complete bracket citations with trailing partial", () => {
+    const raw =
+      "Done" +
+      bracketCite({ type: "citation", doc: "A.pdf", page: 1 }) +
+      " and 【{\"type"
+    const parsed = parseStreamingLiveText(raw)
+    expect(parsed.content).toBe("Done⟦1⟧ and")
+    expect(parsed.citations).toHaveLength(1)
+  })
+})
+
+describe("stripSourceTags — bracket citations", () => {
+  test("removes bracket citations for exports, keeps other brackets", () => {
+    const raw =
+      "Fact " +
+      bracketCite({ type: "citation", doc: "A.pdf", page: 1 }) +
+      " here. 【重要】 stays."
+    expect(stripSourceTags(raw)).toBe("Fact here. 【重要】 stays.")
+  })
+})

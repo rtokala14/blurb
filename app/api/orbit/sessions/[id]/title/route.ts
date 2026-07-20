@@ -20,11 +20,9 @@ export async function PUT(
     const session = await getSessionRow(id, await resolveRequestUser(request))
     if (!session) return json({ error: "Session not found" }, { status: 404 })
     const body = (await request.json()) as { title?: string }
-    const updated = await updateSessionRow(id, {
-      title: normalizeTitle(body.title ?? ""),
-      updatedAt: new Date().toISOString(),
-    })
-    return json(serializeSession(updated ?? session))
+    const title = normalizeTitle(body.title ?? "")
+    await updateSessionRow(session, { title })
+    return json(serializeSession({ ...session, title }))
   } catch (error) {
     return errorResponse(error)
   }
