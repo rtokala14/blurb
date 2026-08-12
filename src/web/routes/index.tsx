@@ -13,6 +13,7 @@ const pieces = [
   ['Data', 'TanStack Router loaders prime a TanStack Query cache the components read.'],
   ['Database', 'Kysely over tedious, pointed at Azure SQL.'],
   ['UI', 'shadcn/ui on Base UI primitives, Tailwind v4, React Compiler.'],
+  ['Offline', 'Installable PWA. The shell is precached; the API is never cached.'],
 ] as const
 
 function Overview() {

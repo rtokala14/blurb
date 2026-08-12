@@ -4,6 +4,7 @@ import tailwindcss from '@tailwindcss/vite'
 import { tanstackRouter } from '@tanstack/router-plugin/vite'
 import react, { reactCompilerPreset } from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
+import { serviceWorker } from './scripts/sw-plugin.ts'
 
 const r = (p: string) => fileURLToPath(new URL(p, import.meta.url))
 
@@ -27,6 +28,8 @@ export default defineConfig({
     // useMemo/useCallback to avoid re-render cascades. Build-time only.
     babel({ presets: [reactCompilerPreset()] }),
     tailwindcss(),
+    // Emits dist/client/sw.js with a precache manifest taken from the build.
+    serviceWorker({ source: r('./src/web/sw.ts') }),
   ],
   resolve: {
     alias: {

@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // The service worker runs in a worker scope, not the DOM. Kept in its own
+    // program because the two lib sets conflict.
+    "lib": ["ESNext", "WebWorker"],
+    "types": []
+  },
+  "include": ["src/web/sw.ts"],
+  "exclude": ["node_modules", "dist"]
+}

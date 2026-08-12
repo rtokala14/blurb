@@ -18,6 +18,7 @@ interface Asset {
   type: string
   etag: string
   cacheControl: string
+  extraHeaders?: Record<string, string>
 }
 
 const MIME: Record<string, string> = {
@@ -74,6 +75,9 @@ export async function loadAssets(rootDir: string): Promise<Map<string, Asset>> {
 
     const compressible = COMPRESSIBLE.test(url) && body.byteLength <= MAX_PRECOMPRESS_BYTES
     assets.set(url, {
+      // Lets the worker control the whole origin even if it is ever moved off
+      // the root. Harmless otherwise.
+      ...(url === '/sw.js' ? { extraHeaders: { 'service-worker-allowed': '/' } } : {}),
       body,
       ...(compressible
         ? {
@@ -99,7 +103,7 @@ function respond(asset: Asset, request: Request): Response {
   if (request.headers.get('if-none-match') === asset.etag) {
     return new Response(null, {
       status: 304,
-      headers: { etag: asset.etag, 'cache-control': asset.cacheControl },
+      headers: { ...asset.extraHeaders, etag: asset.etag, 'cache-control': asset.cacheControl },
     })
   }
 
@@ -113,6 +117,7 @@ function respond(asset: Asset, request: Request): Response {
 
   const headers: Record<string, string> = {
     ...SECURITY_HEADERS,
+    ...asset.extraHeaders,
     'content-type': asset.type,
     'content-length': String(body.byteLength),
     'cache-control': asset.cacheControl,

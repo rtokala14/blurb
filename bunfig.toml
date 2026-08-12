@@ -6,5 +6,4 @@ exact = true
 peer = true
 
 [test]
-preload = ["./tests/dom.ts", "./tests/setup.ts"]
 coverageReporter = ["text"]

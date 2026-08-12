@@ -8,7 +8,7 @@ const processes = [
     stdio: ['inherit', 'inherit', 'inherit'],
     env: { ...process.env, NODE_ENV: process.env.NODE_ENV ?? 'development' },
   }),
-  Bun.spawn(['bun', 'x', 'vite'], { stdio: ['inherit', 'inherit', 'inherit'] }),
+  Bun.spawn(['bunx', '--bun', 'vite'], { stdio: ['inherit', 'inherit', 'inherit'] }),
 ]
 
 const shutdown = () => {

@@ -91,3 +91,27 @@ If a native or dynamically-required dependency ever fails to bundle, the fallbac
 The native compiler is stable and roughly an order of magnitude faster to typecheck, which matters
 because Eden's inferred types are the heaviest thing in the project. Vite/Rolldown transpiles with
 Oxc and never calls `tsc`, so this only affects `bun run typecheck`.
+
+## A hand-written service worker instead of Workbox
+
+Workbox is the default answer and it is a good library, but it brings a build-time dependency tree
+and a runtime bundle for behaviour that is about 120 readable lines here — four caching strategies
+and an update handshake. The one genuinely hard part, keeping the precache manifest in sync with the
+build, is solved by `scripts/sw-plugin.ts`: it scans the actual output directory after the build
+(so files copied from `public/` are included, not just bundled chunks) and injects the list plus a
+content-derived version.
+
+Revisit this if the app needs background sync, periodic sync, or expiring caches with quotas —
+that is where Workbox's plumbing starts to earn its weight.
+
+## Two test environments, not one
+
+Component tests need browser globals; server tests must not have them. happy-dom replaces `Request`,
+`Response` and `fetch` with browser-accurate implementations — which, among other things, refuse to
+set forbidden headers like `Accept-Encoding`. Registering it globally made a static-asset test claim
+the server did not compress a response when it did.
+
+So the DOM is registered by a `--preload` used only for `tests/web` (`bun run test:web`), and
+`tests/server` runs against Bun's own globals. It has to be a preload rather than an import: Bun
+evaluates imported modules ahead of the importing file's own statements, and @testing-library binds
+`screen` to `document.body` the moment it is evaluated.

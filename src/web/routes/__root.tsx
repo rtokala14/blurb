@@ -1,6 +1,7 @@
 import type { QueryClient } from '@tanstack/react-query'
 import { createRootRouteWithContext, Link, Outlet } from '@tanstack/react-router'
 import { lazy, Suspense } from 'react'
+import { UpdatePrompt } from '@/components/update-prompt'
 
 export interface RouterContext {
   queryClient: QueryClient
@@ -39,6 +40,8 @@ function RootLayout() {
       <main className="mx-auto max-w-3xl px-6 py-10">
         <Outlet />
       </main>
+
+      <UpdatePrompt />
 
       <Suspense>
         <Devtools />

@@ -2,10 +2,28 @@
 <html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#0a0a0a" />
     <title>Bun Stack</title>
+
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <!--
+      use-credentials makes the browser send cookies with the manifest request.
+      Without it the manifest is fetched anonymously, so anything behind an auth
+      proxy answers 401 or redirects to a login page and the app silently stops
+      being installable.
+    -->
+    <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials" />
+
+    <meta name="mobile-web-app-capable" content="yes" />
+
+    <!-- iOS ignores display/theme_color from the manifest. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="bun-stack" />
   </head>
   <body>
     <div id="root"></div>
