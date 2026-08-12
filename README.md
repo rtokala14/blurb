@@ -1,75 +1,180 @@
-# Vantage — Land Suitability (Vadodara PoC)
+# bun-stack
 
-An interactive, dark "ops-console" web app that computes a **weighted land-suitability
-score** over a 500-cell analysis grid (Vadodara region, Gujarat), renders it as a
-red→green heatmap, and — on clicking any cell — erupts a **360° radial 3D column
-chart** showing how each layer contributes to that cell's score. Layers are fully
-dynamic: add / remove / enable / re-weight, with live validation that weights total 100.
+A performance-first starter for internal apps: **one runtime, one image, one type system**.
 
-![heatmap](docs/screenshots/01-heatmap.png)
+Bun runs the package manager, the server, the test runner and the bundler. Elysia serves a
+TypeBox-validated API. The React SPA is built by Vite and served by the same Bun process, so
+production is a single container with no reverse proxy, no Node, and no second origin.
 
-## What's in the box
+```
+bun install
+docker compose -f docker-compose.dev.yml up -d   # local SQL Server
+cp .env.example .env                             # then set DB_DRIVER=mssql
+bun run db:migrate
+bun dev                                          # http://localhost:5173
+```
 
-- **`scripts/build-grid.mjs`** — dependency-free Node preprocessing. Builds a canonical
-  500-cell grid from `data/Analysis/Slope.geojson`, joins every analysis layer by
-  **nearest cell centroid** (FeatureID is not consistent across layers) and village
-  layers by **point-in-polygon** of the cell centroid (2 km nearest-polygon fallback).
-  Emits `app/public/data/{grid,scores,catalog}.json` + minified overlays, and prints a
-  join-quality report (hard-fails if any grid layer matches < 495/500).
-- **`app/`** — Vite + React 18 + TypeScript + zustand + MapLibre GL. Carto Dark Matter
-  basemap, feature-state heatmap, the fill-extrusion radial chart, glass control panel
-  (weight donut, sliders, presets, add/remove/enable, per-layer score histograms),
-  cell inspector, validation error banner with auto-balance / undo, overlay toggles,
-  and a CVD-safe blue-ramp toggle.
+`DB_DRIVER=memory` (the default) skips the database entirely, so the app runs with nothing else
+installed.
 
-## How to run
+## The stack
+
+| Layer | Choice | Why this one |
+| --- | --- | --- |
+| Runtime / PM / tests / bundler | **Bun 1.3** | One toolchain. `bun test` needs no vitest, `bun build` needs no tsup. |
+| HTTP | **Elysia** | Fastest Bun-native router, and TypeBox is built in — validation with no extra dependency. |
+| Validation | **TypeBox** (via `elysia`'s `t`) | Compiles to JIT'd validators. One schema is the runtime check *and* the client type. |
+| RPC | **Eden Treaty** | The server's type is imported into the browser with `import type`. No codegen, no generated client, nothing at runtime. |
+| Routing | **TanStack Router** | Type-safe routes, loaders that start on hover, automatic per-route code splitting. |
+| Server state | **TanStack Query** | Owns caching and invalidation; the router only triggers loads. |
+| UI | **shadcn/ui on Base UI** | Components are source in your repo. Base UI is lighter than Radix and actively developed by the MUI team. |
+| Styling | **Tailwind v4** | Oxide engine, no PostCSS config, no `tailwind.config.js`. |
+| React | **React 19 + React Compiler** | Auto-memoisation at build time, so app code carries no `useMemo`/`useCallback` noise. |
+| Database | **Kysely + tedious** | Typed SQL for Azure SQL with effectively zero runtime overhead. See [docs/decisions.md](docs/decisions.md). |
+
+There is **no zod** in any bundle. It appears in the lockfile only as a build-time dependency of
+the TanStack router plugin and `kysely-codegen`; neither the server bundle nor the browser bundle
+contains it. `bun run check:no-zod` asserts that.
+
+## Layout
+
+```
+src/
+  server/
+    index.ts              composition root — picks implementations, starts the server
+    app.ts                the API surface; its type is the RPC contract
+    env.ts                parsed and validated at boot, fails loudly
+    static.ts             in-memory SPA serving with precompressed assets
+    db/
+      index.ts            Kysely + tedious + tarn wiring
+      schema.generated.ts database types (regenerate with `bun run db:codegen`)
+      migrations/         explicit, ordered, registered in index.ts
+    modules/<feature>/
+      model.ts            TypeBox schemas — the contract
+      repository.ts       storage interface + SQL and in-memory drivers
+      service.ts          application logic, depends on the interface only
+      routes.ts           transport: validate, delegate, map to a status
+  web/
+    routes/               file-based routes (TanStack Router)
+    lib/api.ts            Eden client
+    lib/query.ts          QueryClient defaults
+    lib/<feature>.ts      queryOptions + mutation hooks, one key factory
+    components/ui/        shadcn components (yours to edit)
+  shared/                 values both sides need
+tests/                    bun test — server routes and React components
+```
+
+## The three patterns worth copying
+
+**1. The API type is the client.** `src/web/lib/api.ts` does `import type { Api } from '@server/app'`.
+Because it is a type-only import, no server code reaches the browser — but renaming a route or
+changing a response field breaks the frontend build immediately.
+
+**2. Loaders prime the cache, components read it.** A route loader calls
+`queryClient.ensureQueryData(...)` and the component calls `useSuspenseQuery(...)` with the *same*
+`queryOptions`. With `defaultPreload: 'intent'` the fetch starts on hover, so by the time the
+component mounts the data is usually already there — and there is no `isLoading` branch to write.
+
+**3. Storage sits behind an interface.** `TodoRepository` has a Kysely driver and an in-memory
+driver. Tests and `bun dev` use the second one, which is why the suite needs no database and runs
+in under a second.
+
+### Adding a feature end to end
+
+```
+src/server/modules/thing/{model,repository,service,routes}.ts   # define the contract
+src/server/app.ts                                               # .use(thingRoutes(...))
+src/web/lib/thing.ts                                            # queryOptions + mutations
+src/web/routes/thing.tsx                                        # loader + useSuspenseQuery
+```
+
+No client regeneration step — the types follow the moment the server file is saved.
+
+## Database
+
+Migrations are the source of truth; types are generated from the migrated database.
 
 ```bash
-# 1. (Re)generate the grid data — writes app/public/data/*
-node scripts/build-grid.mjs
-
-# 2. Run the app
-cd app
-npm install
-npm run dev        # dev server  →  http://localhost:5173
-# or
-npm run build && npm run preview   # production build + static preview
+bun run db:migrate                          # apply everything pending
+bun run db:rollback                         # revert the last one
+bun run src/server/db/migrate.ts status     # what is applied
+bun run db:codegen                          # regenerate src/server/db/schema.generated.ts
 ```
 
-The preprocessed data is committed, so step 1 is only needed if the source GeoJSON
-under `data/` changes.
+Add `src/server/db/migrations/NNNN_name.ts` and register it in `migrations/index.ts` — the list is
+explicit so a missing file is a compile error rather than a production surprise.
 
-## Scoring model
+`DATABASE_URL` accepts the ADO.NET form the Azure portal gives you
+(`Server=tcp:...,1433;Initial Catalog=...;User ID=...;Password=...;Encrypt=True`) or a
+`mssql://user:pass@host:1433/db` URL. Prefer the ADO form — `kysely-codegen` reads the same
+variable and only parses that one.
 
+In CI, migrations run against a throwaway SQL Server container to prove they apply to a clean
+database and are a no-op on second run. In production, the `migrate` job in
+`.github/workflows/deploy.yml` runs them against the connection string in the `DATABASE_URL`
+environment secret. Write them expand-then-contract so the running image keeps working while they
+apply.
+
+Notes for Azure SQL:
+
+- Primary keys are monotonic identities, not random GUIDs — SQL Server clusters on the PK and
+  random keys fragment the index on every insert.
+- Listing endpoints use keyset pagination (`WHERE createdAt < ?`) rather than `OFFSET`, so page
+  1000 costs the same as page 1.
+- Column names match the TypeScript field names exactly, so nothing is remapped at runtime.
+
+## Deployment
+
+```bash
+docker build -t bun-stack .
+docker run --rm -p 3000:3000 -e DB_DRIVER=memory bun-stack
 ```
-suitability(cell) = Σ  (wᵢ / 100) · sᵢ(cell)     over enabled layers
-```
 
-- `sᵢ ∈ [0,1]` is each layer's precomputed suitability (higher = more suitable).
-- Enabled weights **must sum to exactly 100**; any other total is an invalid
-  configuration → the map desaturates to gray, the radial chart freezes, and a
-  persistent error banner offers **Auto-balance** (proportional rescale, rounding fixed
-  so the total is exactly 100) and **Undo**.
-- Cells with no data for a layer (e.g. a centroid outside every village polygon) are
-  **re-normalized** over the layers that do have data and flagged "partial data".
+The build stage produces `dist/client` and a **self-contained** `dist/server/index.js` — every
+dependency is inlined, so the runtime stage copies `dist/` and nothing else. No `node_modules` in
+the final image, and it runs as a non-root user.
 
-## Join quality (from the pipeline report)
+`.github/workflows/deploy.yml` pushes to ACR using federated credentials (no stored client
+secret) and then applies migrations. Set:
 
-| Layer group | Result |
-|---|---|
-| 9 grid layers (roads, industrial, slope, double-crop, settlements, railway, junctions, streams, GIDC) | **500/500** matched, 0 m drift |
-| Village NPO / WFPR | 476 / 460 covered (rest re-normalized) |
-| Village Jantri | 313 covered — only 53 villages, genuinely spans part of the area |
+| Kind | Name |
+| --- | --- |
+| Variables | `ACR_NAME`, `IMAGE_NAME` |
+| Secrets | `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `DATABASE_URL` |
 
-The GIDC influence layer's source extract is all zero, so the pipeline substitutes
-deterministic synthetic demo scores (seeded per cell index); it is enabled by default
-with weight 6.
+Probes: `/api/health` for liveness (never touches the database) and `/api/health/ready` for
+readiness (does). The process drains in-flight requests on SIGTERM before exiting.
 
-## Design & accessibility
+Configuration is in `.env.example`; everything is validated at boot by `src/server/env.ts`.
 
-Dark, glassmorphism UI. The 8-slot categorical layer palette is validated with the
-`dataviz` skill's `validate_palette.js` (passes; CVD separation sits in the 8–12 floor
-band, mitigated by the required **direct labels everywhere** — every sector, card, and
-bar names its layer, so identity never rides on color alone). The red→amber→green
-suitability ramp is paired with numeric scores in the tooltip/inspector and a
-**CVD-safe blue** toggle. `prefers-reduced-motion` is respected.
+## Performance choices
+
+- **Static assets are prepared once at boot** — bytes, ETag, Brotli and gzip variants all live in
+  memory, so a request is a `Map` lookup and a `Response`. No disk I/O, no per-request compression.
+  Hashed assets get `immutable` caching; `index.html` revalidates. Boot cost is roughly 600 ms for
+  a typical bundle; lower `BROTLI_PARAM_QUALITY` in `src/server/static.ts` if that matters more
+  than transfer size.
+- **`precompile: true`** builds every Elysia validator at startup, so the first request after a
+  cold start is not the slow one.
+- **Vendor chunks are split** from app code, so shipping a feature does not invalidate React in
+  browser caches. Routes are split automatically.
+- **Source maps are `hidden`** — generated for error tracking, never referenced by the app.
+- **React Compiler** handles memoisation; don't hand-write it.
+
+## Commands
+
+| | |
+| --- | --- |
+| `bun dev` | API and Vite together, one Ctrl-C |
+| `bun run build` | SPA + server bundle into `dist/` |
+| `bun start` | Run the production build |
+| `bun test` | Everything (`--watch` for a loop) |
+| `bun run typecheck` | `tsc --noEmit` (TypeScript 7, native) |
+| `bun run lint` / `lint:fix` | Biome — replaces ESLint and Prettier |
+| `bun run check` | Typecheck + lint + test, what CI runs |
+
+## Deliberately not here yet
+
+Auth, email, PWA/offline sync, and observability are next. The seams for them exist: modules are
+self-contained plugins, the composition root is one file, and the service worker will slot in at
+the Vite layer without touching the API.

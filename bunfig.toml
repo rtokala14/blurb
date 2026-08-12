@@ -1,0 +1,10 @@
+# Bun is the package manager, runtime, bundler and test runner for this project.
+
+[install]
+# Reproducible installs: no implicit version drift between dev machines and CI.
+exact = true
+peer = true
+
+[test]
+preload = ["./tests/dom.ts", "./tests/setup.ts"]
+coverageReporter = ["text"]
