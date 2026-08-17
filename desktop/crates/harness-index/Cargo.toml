@@ -1,0 +1,15 @@
+[package]
+name = "harness-index"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+
+# Planned (phase 2 — see INDEX-DESIGN.md):
+# tree-sitter = "0.24" + per-language grammars (symbol extraction)
+# fst = "0.4"          (symbol name automaton: prefix/fuzzy lookup)
+# memmap2 = "0.9"      (mmap'd trigram postings)
+# notify = "7"         (fs watching for incremental updates)

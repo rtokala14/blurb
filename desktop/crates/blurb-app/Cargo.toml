@@ -1,0 +1,28 @@
+[package]
+name = "blurb-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "blurb"
+path = "src/main.rs"
+
+[dependencies]
+harness-core = { path = "../harness-core" }
+harness-git = { path = "../harness-git" }
+harness-index = { path = "../harness-index" }
+
+gpui.workspace = true
+gpui_platform.workspace = true
+gpui-component.workspace = true
+gpui-component-assets.workspace = true
+smol.workspace = true
+
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+dirs.workspace = true
+anyhow.workspace = true
+log.workspace = true
+crossbeam-channel.workspace = true
